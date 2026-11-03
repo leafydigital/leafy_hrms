@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-paper font-sans text-ink antialiased;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition
+      focus:outline-none focus-visible:ring-2 focus-visible:ring-leaf-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply bg-lime-500 text-ink hover:bg-lime-400;
+  }
+  .btn-dark {
+    @apply bg-ink text-white hover:bg-ink-700;
+  }
+  .btn-leaf {
+    @apply bg-leaf-600 text-white hover:bg-leaf-700;
+  }
+  .btn-ghost {
+    @apply border border-gray-200 bg-white text-ink hover:bg-gray-50;
+  }
+  .btn-danger {
+    @apply bg-red-600 text-white hover:bg-red-700;
+  }
+  .btn-sm {
+    @apply px-2.5 py-1.5 text-xs;
+  }
+  .input {
+    @apply w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm placeholder:text-gray-400
+      focus:border-leaf-600 focus:outline-none focus:ring-2 focus:ring-lime-400/40 disabled:bg-gray-100;
+  }
+  .label {
+    @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500;
+  }
+  .card {
+    @apply rounded-xl border border-gray-200/80 bg-white shadow-card;
+  }
+  .th {
+    @apply whitespace-nowrap px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-500;
+  }
+  .td {
+    @apply px-4 py-3 text-sm;
+  }
+}
+
+/* Payslips are view-only for employees: block selection and printing. */
+.no-copy {
+  -webkit-user-select: none;
+  user-select: none;
+}
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}
+
+@keyframes slidein {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* Phones: avoid iOS zoom-on-focus (inputs under 16px) */
+@media (max-width: 640px) {
+  .input, textarea, select { font-size: 16px; }
+}
