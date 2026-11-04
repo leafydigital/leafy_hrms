@@ -1,0 +1,1022 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Leafy Digital — Bulk Website Audit Tool</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<!-- SheetJS for xlsx/csv parsing -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root {
+  --bg:#0b0f0c; --bg2:#111814; --bg3:#181f1a;
+  --border:rgba(45,158,95,0.18); --green:#2d9e5f; --green2:#3dbe72;
+  --green-dim:rgba(45,158,95,0.12); --red:#e05252; --red-dim:rgba(224,82,82,0.12);
+  --amber:#e8a245; --amber-dim:rgba(232,162,69,0.12);
+  --blue:#5b9bd5; --blue-dim:rgba(91,155,213,0.12);
+  --purple:#a78bfa; --purple-dim:rgba(167,139,250,0.12);
+  --text:#e8ede9; --muted:#7a9080; --dim:#445548;
+  --mono:'IBM Plex Mono',monospace; --sans:'DM Sans',sans-serif; --r:8px;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;font-size:14px;}
+
+/* HEADER */
+.hdr{border-bottom:1px solid var(--border);padding:16px 28px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:rgba(11,15,12,0.96);backdrop-filter:blur(12px);z-index:200;}
+.logo{font-family:var(--mono);font-size:13px;color:var(--green2);font-weight:600;letter-spacing:.05em;}
+.logo span{color:var(--muted);font-weight:400;}
+.hdr-stat{font-family:var(--mono);font-size:11px;color:var(--muted);}
+.hdr-stat b{color:var(--green2);}
+
+.main{max-width:1440px;margin:0 auto;padding:28px;}
+
+/* UPLOAD */
+.upload-row{display:grid;grid-template-columns:1fr 360px;gap:20px;margin-bottom:24px;}
+.drop-zone{border:1.5px dashed var(--border);border-radius:12px;padding:40px;text-align:center;cursor:pointer;transition:all .2s;background:var(--bg2);position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;}
+.drop-zone:hover,.drop-zone.drag-over{border-color:var(--green);background:var(--green-dim);}
+.drop-zone input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
+.drop-icon{font-size:32px;}
+.drop-title{font-size:15px;font-weight:600;}
+.drop-sub{font-size:12px;color:var(--muted);}
+.drop-sub b{color:var(--green2);}
+.file-badge{font-family:var(--mono);font-size:11px;color:var(--green2);background:var(--green-dim);padding:4px 12px;border-radius:100px;display:none;}
+.file-badge.show{display:inline-block;}
+
+/* CONFIG */
+.cfg{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:14px;}
+.cfg-title{font-family:var(--mono);font-size:10px;color:var(--green2);text-transform:uppercase;letter-spacing:.08em;}
+.field label{display:block;font-size:11px;color:var(--muted);margin-bottom:5px;font-family:var(--mono);}
+.field input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--r);padding:8px 11px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;transition:border-color .2s;}
+.field input:focus{border-color:var(--green);}
+.field input::placeholder{color:var(--dim);}
+.check-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+.ck-item{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);cursor:pointer;padding:5px 8px;border-radius:6px;transition:background .15s;}
+.ck-item:hover{background:var(--green-dim);color:var(--text);}
+.ck-item input{accent-color:var(--green);width:13px;height:13px;}
+.ck-item.on{color:var(--green2);}
+.btn-run{background:var(--green);color:#fff;border:none;border-radius:var(--r);padding:12px;font-family:var(--mono);font-size:12px;font-weight:600;cursor:pointer;transition:all .2s;letter-spacing:.05em;text-transform:uppercase;width:100%;}
+.btn-run:hover:not(:disabled){background:var(--green2);}
+.btn-run:disabled{opacity:.4;cursor:not-allowed;}
+
+/* COLUMN MAPPER */
+.mapper-section{background:var(--bg2);border:1.5px solid var(--amber);border-radius:12px;padding:20px;margin-bottom:20px;display:none;}
+.mapper-section.show{display:block;}
+.mapper-title{font-family:var(--mono);font-size:11px;color:var(--amber);text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px;}
+.mapper-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;}
+.mapper-field label{display:block;font-size:11px;color:var(--muted);margin-bottom:5px;font-family:var(--mono);}
+.mapper-field select{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--r);padding:7px 10px;color:var(--text);font-family:var(--mono);font-size:11px;outline:none;cursor:pointer;}
+.mapper-field select:focus{border-color:var(--amber);}
+.mapper-field select option{background:var(--bg3);}
+.btn-confirm{margin-top:14px;background:var(--amber);color:#000;border:none;border-radius:var(--r);padding:8px 20px;font-family:var(--mono);font-size:11px;font-weight:600;cursor:pointer;letter-spacing:.05em;}
+.mapper-preview{margin-top:12px;font-family:var(--mono);font-size:11px;color:var(--muted);background:var(--bg3);padding:10px 14px;border-radius:var(--r);line-height:2;}
+
+/* PROGRESS */
+.prog{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:24px;display:none;}
+.prog.show{display:block;}
+.prog-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
+.prog-title{font-family:var(--mono);font-size:12px;color:var(--green2);}
+.prog-count{font-family:var(--mono);font-size:12px;color:var(--muted);}
+.prog-bar-wrap{background:var(--bg3);border-radius:100px;height:5px;margin-bottom:14px;overflow:hidden;}
+.prog-bar{height:100%;background:linear-gradient(90deg,var(--green),var(--green2));border-radius:100px;transition:width .3s;width:0;}
+.log-box{background:var(--bg);border-radius:var(--r);padding:10px 14px;height:110px;overflow-y:auto;font-family:var(--mono);font-size:10.5px;color:var(--muted);line-height:1.9;}
+.log-box .ok{color:var(--green2);} .log-box .err{color:var(--red);} .log-box .warn{color:var(--amber);} .log-box .info{color:var(--blue);}
+
+/* STATS */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:24px;display:none;}
+.stats.show{display:grid;}
+.scard{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center;cursor:pointer;transition:all .15s;}
+.scard:hover{border-color:var(--green);transform:translateY(-1px);}
+.scard.red{border-color:rgba(224,82,82,.3);}
+.scard.amber{border-color:rgba(232,162,69,.3);}
+.scard.green{border-color:rgba(45,158,95,.35);}
+.scard.purple{border-color:rgba(167,139,250,.35);}
+.snum{font-family:var(--mono);font-size:28px;font-weight:600;line-height:1;margin-bottom:5px;}
+.scard.red .snum{color:var(--red);} .scard.amber .snum{color:var(--amber);}
+.scard.green .snum{color:var(--green2);} .scard.purple .snum{color:var(--purple);}
+.slabel{font-size:11px;color:var(--muted);line-height:1.4;}
+
+/* FILTER BAR */
+.fbar{display:flex;gap:7px;margin-bottom:14px;flex-wrap:wrap;display:none;}
+.fbar.show{display:flex;}
+.fbtn{background:var(--bg2);border:1px solid var(--border);color:var(--muted);padding:5px 13px;border-radius:100px;font-size:11px;font-family:var(--mono);cursor:pointer;transition:all .15s;white-space:nowrap;}
+.fbtn:hover{border-color:var(--green);color:var(--text);}
+.fbtn.active{background:var(--green-dim);border-color:var(--green);color:var(--green2);}
+.exp-btn{margin-left:auto;background:var(--bg3);border:1px solid var(--border);color:var(--green2);padding:5px 14px;border-radius:100px;font-size:11px;font-family:var(--mono);cursor:pointer;transition:all .15s;}
+.exp-btn:hover{background:var(--green-dim);}
+
+/* TABLE */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:12px;display:none;}
+.tbl-wrap.show{display:block;}
+table{width:100%;border-collapse:collapse;font-size:12px;}
+thead th{background:var(--bg3);color:var(--muted);font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.06em;padding:10px 13px;text-align:left;white-space:nowrap;border-bottom:1px solid var(--border);}
+thead th.sort{cursor:pointer;user-select:none;}
+thead th.sort:hover{color:var(--green2);}
+tbody tr{border-bottom:1px solid rgba(255,255,255,.04);transition:background .1s;}
+tbody tr:hover{background:rgba(45,158,95,.05);}
+tbody td{padding:9px 13px;vertical-align:middle;}
+.td-name{font-weight:500;color:var(--text);max-width:180px;}
+.td-url{font-family:var(--mono);font-size:10px;color:var(--blue);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.td-url a{color:var(--blue);text-decoration:none;}
+.td-url a:hover{text-decoration:underline;}
+.pill{display:inline-block;padding:2px 8px;border-radius:100px;font-family:var(--mono);font-size:11px;font-weight:600;}
+.pill.good{background:var(--green-dim);color:var(--green2);}
+.pill.warn{background:var(--amber-dim);color:var(--amber);}
+.pill.bad{background:var(--red-dim);color:var(--red);}
+.pill.na{background:rgba(255,255,255,.05);color:var(--dim);}
+.ck-ok{color:var(--green2);font-size:14px;} .ck-no{color:var(--red);font-size:14px;} .ck-mid{color:var(--amber);font-size:14px;}
+.tags{display:flex;flex-wrap:wrap;gap:3px;max-width:220px;}
+.tag{font-size:9.5px;padding:2px 6px;border-radius:4px;font-family:var(--mono);white-space:nowrap;}
+.tag.r{background:var(--red-dim);color:var(--red);}
+.tag.a{background:var(--amber-dim);color:var(--amber);}
+.tag.b{background:var(--blue-dim);color:var(--blue);}
+.tag.g{background:var(--green-dim);color:var(--green2);}
+.pri{font-family:var(--mono);font-size:10px;font-weight:600;padding:3px 8px;border-radius:4px;white-space:nowrap;}
+.pri.h{background:var(--red-dim);color:var(--red);}
+.pri.m{background:var(--amber-dim);color:var(--amber);}
+.pri.l{background:var(--green-dim);color:var(--green2);}
+
+/* BREAKDOWN */
+.bk-section{margin-top:36px;display:none;}
+.bk-section.show{display:block;}
+.sec-title{font-family:var(--mono);font-size:10px;color:var(--green2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px;}
+.bk-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(195px,1fr));gap:10px;margin-bottom:36px;}
+.bk-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;}
+.bk-lbl{font-size:11px;color:var(--muted);margin-bottom:7px;}
+.bk-bar-w{background:var(--bg3);border-radius:100px;height:4px;margin-bottom:7px;overflow:hidden;}
+.bk-bar{height:100%;border-radius:100px;}
+.bk-bar.r{background:var(--red);} .bk-bar.a{background:var(--amber);} .bk-bar.b{background:var(--blue);}
+.bk-stats{display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;}
+.bk-cnt{color:var(--text);font-weight:600;} .bk-pct{color:var(--muted);}
+.bk-pitch{margin-top:7px;font-size:10px;color:var(--dim);font-family:var(--mono);}
+
+@media(max-width:900px){.upload-row{grid-template-columns:1fr;}.main{padding:14px;}}
+</style>
+</head>
+<body>
+
+<header class="hdr">
+  <div class="logo">leafy<span>/</span>audit <span style="color:var(--dim)">v3.0</span></div>
+  <div class="hdr-stat" id="hdrStat">Upload your Apify CSV or XLSX to begin</div>
+</header>
+
+<div class="main">
+
+  <!-- UPLOAD + CONFIG -->
+  <div class="upload-row">
+    <div class="drop-zone" id="dropZone">
+      <input type="file" id="fileInput" accept=".csv,.xlsx,.xls">
+      <div class="drop-icon">📂</div>
+      <div class="drop-title">Drop your Apify file here</div>
+      <div class="drop-sub">Supports <b>CSV</b> and <b>XLSX</b> · any column names</div>
+      <span class="file-badge" id="fileBadge">No file</span>
+    </div>
+
+    <div class="cfg">
+      <div class="cfg-title">⚙ Audit Config</div>
+      <div class="field">
+        <label>Google PSI API Key <span style="color:var(--dim)">(optional — free tier works, key = faster + no rate limits)</span></label>
+        <input type="text" id="apiKey" placeholder="AIzaSy... (leave blank to use free tier — slower but works)">
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:7px;font-family:var(--mono);">Checks to run</div>
+        <div class="check-grid">
+          <label class="ck-item on"><input type="checkbox" checked data-check="speed"> ⚡ Page Speed</label>
+          <label class="ck-item on"><input type="checkbox" checked data-check="seo"> 🔍 SEO Tags</label>
+          <label class="ck-item on"><input type="checkbox" checked data-check="mobile"> 📱 Mobile</label>
+          <label class="ck-item on"><input type="checkbox" checked data-check="https"> 🔒 HTTPS</label>
+          <label class="ck-item on"><input type="checkbox" checked data-check="social"> 📣 Social Media</label>
+          <label class="ck-item on"><input type="checkbox" checked data-check="booking"> 📅 Booking</label>
+          <label class="ck-item on"><input type="checkbox" checked data-check="contact"> 📞 Contact</label>
+          <label class="ck-item on"><input type="checkbox" checked data-check="design"> 🎨 Design Age</label>
+        </div>
+      </div>
+      <div class="field">
+        <label>Concurrency (parallel requests)</label>
+        <input type="number" id="concurrency" value="3" min="1" max="10">
+      </div>
+      <button class="btn-run" id="runBtn" disabled onclick="startAudit()">▶ RUN AUDIT</button>
+    </div>
+  </div>
+
+  <!-- COLUMN MAPPER -->
+  <div class="mapper-section" id="mapperSection">
+    <div class="mapper-title">⚠ Map Your Columns — We detected these headers in your file. Tell us which column is which.</div>
+    <div class="mapper-grid" id="mapperGrid"></div>
+    <div class="mapper-preview" id="mapperPreview"></div>
+    <button class="btn-confirm" onclick="confirmMapping()">✓ Confirm Mapping & Enable Run</button>
+  </div>
+
+  <!-- PROGRESS -->
+  <div class="prog" id="progSection">
+    <div class="prog-hdr">
+      <span class="prog-title" id="progTitle">Auditing businesses...</span>
+      <span class="prog-count" id="progCount">0 / 0</span>
+    </div>
+    <div class="prog-bar-wrap"><div class="prog-bar" id="progBar"></div></div>
+    <div class="log-box" id="logBox"></div>
+  </div>
+
+  <!-- STATS -->
+  <div class="stats" id="statsRow">
+    <div class="scard red" onclick="applyFilter('no-website')">
+      <div class="snum" id="s0">0</div><div class="slabel">No Website<br><span style="font-size:10px;color:var(--red)">Easiest sale</span></div>
+    </div>
+    <div class="scard red" onclick="applyFilter('slow')">
+      <div class="snum" id="s1">0</div><div class="slabel">Slow Site<br><span style="font-size:10px;color:var(--muted)">Speed &lt; 70</span></div>
+    </div>
+    <div class="scard amber" onclick="applyFilter('no-mobile')">
+      <div class="snum" id="s2">0</div><div class="slabel">Not Mobile<br>Friendly</div>
+    </div>
+    <div class="scard amber" onclick="applyFilter('poor-seo')">
+      <div class="snum" id="s3">0</div><div class="slabel">Poor SEO<br><span style="font-size:10px;color:var(--muted)">Score &lt; 70</span></div>
+    </div>
+    <div class="scard amber" onclick="applyFilter('no-social')">
+      <div class="snum" id="s4">0</div><div class="slabel">No Social<br>Media Links</div>
+    </div>
+    <div class="scard amber" onclick="applyFilter('no-booking')">
+      <div class="snum" id="s5">0</div><div class="slabel">No Online<br>Booking</div>
+    </div>
+    <div class="scard red" onclick="applyFilter('no-https')">
+      <div class="snum" id="s6">0</div><div class="slabel">No HTTPS<br>Security</div>
+    </div>
+    <div class="scard green" onclick="applyFilter('high')">
+      <div class="snum" id="s7">0</div><div class="slabel">High Priority<br>Leads (50+)</div>
+    </div>
+  </div>
+
+  <!-- FILTER BAR -->
+  <div class="fbar" id="fbar">
+    <button class="fbtn active" onclick="applyFilter('all',this)">All</button>
+    <button class="fbtn" onclick="applyFilter('no-website',this)">🔴 No Website</button>
+    <button class="fbtn" onclick="applyFilter('slow',this)">⚡ Slow</button>
+    <button class="fbtn" onclick="applyFilter('no-mobile',this)">📱 Not Mobile</button>
+    <button class="fbtn" onclick="applyFilter('poor-seo',this)">🔍 Poor SEO</button>
+    <button class="fbtn" onclick="applyFilter('no-social',this)">📣 No Social</button>
+    <button class="fbtn" onclick="applyFilter('no-booking',this)">📅 No Booking</button>
+    <button class="fbtn" onclick="applyFilter('no-https',this)">🔒 No HTTPS</button>
+    <button class="fbtn" onclick="applyFilter('high',this)">🔥 High Priority</button>
+    <button class="exp-btn" onclick="extractEmails()" id="emailBtn" style="background:var(--amber-dim);color:var(--amber);border-color:rgba(232,162,69,.4);">📧 Extract Emails</button>
+    <button class="exp-btn" onclick="exportCSV()">⬇ Export CSV</button>
+  </div>
+
+  <!-- EMAIL EXTRACTION PROGRESS -->
+  <div id="emailProgress" style="display:none;background:var(--bg2);border:1px solid rgba(232,162,69,.3);border-radius:10px;padding:16px 20px;margin-bottom:16px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <span style="font-family:var(--mono);font-size:12px;color:var(--amber);">📧 Extracting emails from websites...</span>
+      <span style="font-family:var(--mono);font-size:11px;color:var(--muted);" id="emailCount">0 / 0</span>
+    </div>
+    <div style="background:var(--bg3);border-radius:100px;height:4px;margin-bottom:10px;overflow:hidden;">
+      <div id="emailBar" style="height:100%;background:var(--amber);border-radius:100px;transition:width .3s;width:0;"></div>
+    </div>
+    <div id="emailLog" style="background:var(--bg);border-radius:var(--r);padding:8px 12px;height:80px;overflow-y:auto;font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.8;"></div>
+  </div>
+
+  <!-- TABLE -->
+  <div class="tbl-wrap" id="tblWrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Business</th>
+          <th>Website</th>
+          <th>Phone</th>
+          <th style="color:var(--amber)">Email Found</th>
+          <th class="sort" onclick="doSort('speed')">Speed ↕</th>
+          <th class="sort" onclick="doSort('seo')">SEO ↕</th>
+          <th>Mobile</th>
+          <th>HTTPS</th>
+          <th>Social</th>
+          <th>Booking</th>
+          <th>Contact</th>
+          <th>Analytics</th>
+          <th>Schema</th>
+          <th>Issues</th>
+          <th class="sort" onclick="doSort('score')">Priority ↕</th>
+          <th>Pitch</th>
+        </tr>
+      </thead>
+      <tbody id="tblBody"></tbody>
+    </table>
+  </div>
+
+  <!-- BREAKDOWN -->
+  <div class="bk-section" id="bkSection">
+    <div class="sec-title">Category Breakdown — Issues Found Across All Businesses</div>
+    <div class="bk-grid" id="bkGrid"></div>
+  </div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════
+let rawRows = [];          // all rows from file
+let allResults = [];       // audited results
+let filtered = [];
+let colMap = { name:'', website:'', phone:'', address:'' };
+let sortKey = null, sortDir = -1;
+let mappingConfirmed = false;
+
+// ═══════════════════════════════════════════
+// FILE PARSING — CSV + XLSX via SheetJS
+// ═══════════════════════════════════════════
+function loadFile(file) {
+  if (!file) return;
+  document.getElementById('fileBadge').textContent = `📄 ${file.name} (${(file.size/1024).toFixed(0)}KB)`;
+  document.getElementById('fileBadge').classList.add('show');
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      let wb;
+      if (file.name.toLowerCase().endsWith('.csv')) {
+        // Force SheetJS to parse CSV too — handles BOM, encoding, quotes
+        wb = XLSX.read(e.target.result, { type: 'binary', raw: false });
+      } else {
+        wb = XLSX.read(e.target.result, { type: 'binary' });
+      }
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      rawRows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+      if (!rawRows.length) { alert('File appears empty.'); return; }
+
+      const headers = Object.keys(rawRows[0]);
+      log(`✓ Loaded ${rawRows.length} rows. Headers: ${headers.join(', ')}`, 'info');
+      document.getElementById('hdrStat').innerHTML = `<b>${rawRows.length}</b> records loaded`;
+
+      // Try auto-detect first
+      autoDetectColumns(headers);
+      showMapper(headers);
+
+    } catch(err) {
+      alert('Could not parse file: ' + err.message);
+    }
+  };
+  reader.readAsBinaryString(file);
+}
+
+// ═══════════════════════════════════════════
+// AUTO-DETECT COLUMN NAMES (Apify-aware)
+// ═══════════════════════════════════════════
+function autoDetectColumns(headers) {
+  const h = headers.map(x => x.toLowerCase().trim());
+
+  // Name detection — Apify uses "title"
+  const namePatterns = ['title','name','business','company','clinic','practice','store'];
+  colMap.name = headers[h.findIndex(x => namePatterns.some(p => x === p || x.startsWith(p)))] || '';
+
+  // Website — Apify uses "website" exactly
+  const webPatterns = ['website','url','web','site','homepage','domain'];
+  colMap.website = headers[h.findIndex(x => webPatterns.some(p => x === p || x.includes(p)))] || '';
+
+  // Phone — Apify uses "phone" or "phoneUnformatted"
+  const phonePatterns = ['phone','tel','mobile','contact'];
+  colMap.phone = headers[h.findIndex(x => phonePatterns.some(p => x.startsWith(p)))] || '';
+
+  // Address — Apify uses "address", "city", "street"
+  const addrPatterns = ['address','city','suburb','street','location'];
+  colMap.address = headers[h.findIndex(x => addrPatterns.some(p => x === p || x.startsWith(p)))] || '';
+}
+
+// ═══════════════════════════════════════════
+// COLUMN MAPPER UI
+// ═══════════════════════════════════════════
+function showMapper(headers) {
+  const section = document.getElementById('mapperSection');
+  const grid = document.getElementById('mapperGrid');
+  section.classList.add('show');
+
+  const fields = [
+    { key:'name',    label:'Business Name', hint:'Apify: "title"' },
+    { key:'website', label:'Website URL',   hint:'Apify: "website"' },
+    { key:'phone',   label:'Phone Number',  hint:'Apify: "phone"' },
+    { key:'address', label:'Suburb / City', hint:'Apify: "city" or "address"' },
+  ];
+
+  grid.innerHTML = fields.map(f => `
+    <div class="mapper-field">
+      <label>${f.label} <span style="color:var(--dim)">(${f.hint})</span></label>
+      <select id="map_${f.key}" onchange="updateMapping('${f.key}',this.value)">
+        <option value="">— skip —</option>
+        ${headers.map(h => `<option value="${esc(h)}" ${colMap[f.key]===h?'selected':''}>${esc(h)}</option>`).join('')}
+      </select>
+    </div>
+  `).join('');
+
+  updatePreview();
+}
+
+function updateMapping(key, val) {
+  colMap[key] = val;
+  updatePreview();
+}
+
+function updatePreview() {
+  if (!rawRows.length) return;
+  const sample = rawRows[0];
+  const preview = document.getElementById('mapperPreview');
+  const lines = Object.entries(colMap).map(([k,v]) => {
+    const val = v ? (sample[v] || '(empty)') : '(not mapped)';
+    const color = v ? 'var(--green2)' : 'var(--dim)';
+    return `<span style="color:var(--muted)">${k.padEnd(8,' ')}</span> → <b style="color:${color}">${esc(String(val).slice(0,60))}</b>`;
+  });
+  preview.innerHTML = 'Sample row preview:<br>' + lines.join('<br>');
+}
+
+function confirmMapping() {
+  if (!colMap.name && !colMap.website) {
+    alert('Please map at least Business Name and Website URL columns.');
+    return;
+  }
+  mappingConfirmed = true;
+  document.getElementById('runBtn').disabled = false;
+  document.getElementById('mapperSection').style.borderColor = 'var(--green)';
+  document.getElementById('mapperSection').querySelector('.mapper-title').textContent =
+    '✓ Column mapping confirmed — ready to audit';
+  log(`Mapping confirmed: name="${colMap.name}" website="${colMap.website}" phone="${colMap.phone}" address="${colMap.address}"`, 'ok');
+}
+
+// ═══════════════════════════════════════════
+// FILE EVENTS
+// ═══════════════════════════════════════════
+document.getElementById('fileInput').addEventListener('change', e => loadFile(e.target.files[0]));
+const dz = document.getElementById('dropZone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('drag-over'); loadFile(e.dataTransfer.files[0]); });
+document.querySelectorAll('.ck-item input').forEach(cb => cb.addEventListener('change', () => cb.closest('.ck-item').classList.toggle('on', cb.checked)));
+
+// ═══════════════════════════════════════════
+// LOGGING
+// ═══════════════════════════════════════════
+function log(msg, type='') {
+  const box = document.getElementById('logBox');
+  const d = document.createElement('div');
+  d.className = type;
+  d.textContent = `${new Date().toLocaleTimeString()}  ${msg}`;
+  box.appendChild(d);
+  box.scrollTop = box.scrollHeight;
+}
+
+// ═══════════════════════════════════════════
+// FETCH / AUDIT HELPERS
+// ═══════════════════════════════════════════
+async function fetchHTML(url) {
+  const proxies = [
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    `https://corsproxy.io/?${encodeURIComponent(url)}`,
+  ];
+  for (const proxy of proxies) {
+    try {
+      const r = await fetch(proxy, { signal: AbortSignal.timeout(14000) });
+      if (r.ok) return await r.text();
+    } catch {}
+  }
+  return null;
+}
+
+async function checkPSI(url, apiKey) {
+  // Works with OR without API key
+  // Without key: free tier ~400 req/day, may be slower
+  // With key: full quota, recommended for 207 businesses
+  const p = new URLSearchParams({ url, strategy:'mobile' });
+  ['performance','seo','accessibility','best-practices'].forEach(c => p.append('category',c));
+  if (apiKey) p.append('key', apiKey);
+  try {
+    const r = await fetch(`https://www.googleapis.com/pagespeedonline/v5/runPagespeed?${p}`,
+      { signal: AbortSignal.timeout(45000) });
+    if (!r.ok) {
+      if (r.status === 429) log('  ⚠ PSI rate limited — add API key for full scores', 'warn');
+      return null;
+    }
+    const d = await r.json();
+    if (!d?.lighthouseResult) return null;
+    const cats = d.lighthouseResult.categories || {};
+    const au   = d.lighthouseResult.audits || {};
+    return {
+      perf:   Math.round((cats.performance?.score||0)*100),
+      seo:    Math.round((cats.seo?.score||0)*100),
+      a11y:   Math.round((cats.accessibility?.score||0)*100),
+      best:   Math.round((cats['best-practices']?.score||0)*100),
+      lcp:    Math.round(au['largest-contentful-paint']?.numericValue||0),
+      mobile: au['viewport']?.score===1,
+      meta:   au['meta-description']?.score===1,
+      title:  au['document-title']?.score===1,
+      https:  au['is-on-https']?.score===1,
+    };
+  } catch { return null; }
+}
+
+function parseHTML(html, url) {
+  if (!html) return {};
+  const lo = html.toLowerCase();
+  const hasFB  = lo.includes('facebook.com');
+  const hasIG  = lo.includes('instagram.com');
+  const hasTW  = lo.includes('twitter.com')||lo.includes('x.com/');
+  const hasLI  = lo.includes('linkedin.com');
+  const hasYT  = lo.includes('youtube.com');
+  const socialN = [hasFB,hasIG,hasTW,hasLI,hasYT].filter(Boolean).length;
+
+  const bkWords = ['book online','book now','book an appointment','schedule online','calendly.com',
+    'acuityscheduling','appointy','setmore','booksy','timely','online booking','book a consultation',
+    'request appointment','make an appointment','square appointments'];
+  const hasBooking = bkWords.some(k=>lo.includes(k));
+
+  const hasPhone  = /(\+?[\d][\d\s\-\(\)]{6,14}\d)/.test(html);
+  const hasEmail  = lo.includes('mailto:') || (lo.includes('@') && lo.includes('.com'));
+  const hasForm   = lo.includes('<form') || lo.includes('contact-form') || lo.includes('wpcf7');
+  const hasWA     = lo.includes('wa.me')||lo.includes('whatsapp');
+  const hasGA     = lo.includes('gtag(')||lo.includes('google-analytics')||lo.includes('ga.js')||lo.includes("'UA-");
+  const hasFBPx   = lo.includes('fbq(')||lo.includes('facebook-pixel')||lo.includes('connect.facebook.net');
+  const hasSchema = lo.includes('application/ld+json')||lo.includes('itemscope');
+  const hasCanon  = lo.includes('rel="canonical"')||lo.includes("rel='canonical'");
+  const hasOG     = lo.includes('og:title')||lo.includes('property="og:');
+  const hasVP     = lo.includes('name="viewport"')||lo.includes("name='viewport'");
+  const isHttps   = (url||'').startsWith('https://');
+  const hasTitle  = /<title[^>]*>[^<]{3,}<\/title>/i.test(html);
+  const hasMeta   = /name=["']description["'][^>]*content=["'][^"']{10,}/i.test(html)||
+                    /content=["'][^"']{10,}["'][^>]*name=["']description["']/i.test(html);
+  const h1count   = (html.match(/<h1[/\s>]/gi)||[]).length;
+  const oldTech   = lo.includes('bgcolor=')||lo.includes('<font ')||lo.includes('table width=')||lo.includes('<marquee');
+  const isOld     = oldTech && !hasVP;
+
+  return { hasFB,hasIG,hasTW,hasLI,hasYT,socialN,hasBooking,hasPhone,hasEmail,
+           hasForm,hasWA,hasGA,hasFBPx,hasSchema,hasCanon,hasOG,hasVP,isHttps,
+           hasTitle,hasMeta,h1count,isOld };
+}
+
+function scoreAndCategorise(psi, h, exists) {
+  if (!exists) return {
+    issues:['NO WEBSITE'], services:['Website Design'], score:80,
+    pitch:'Zero online presence — build them a website. Easiest sale.'
+  };
+  const issues=[]; const svcs=new Set(); let sc=0;
+  const add=(issue,svc,pts)=>{ issues.push(issue); if(svc)svcs.add(svc); sc+=pts; };
+
+  if (psi) {
+    if (psi.perf<50)       add('Very slow (<50)','Website Redesign',25);
+    else if(psi.perf<70)   add('Slow loading (50-70)','Speed Optimisation',15);
+    if (!psi.mobile)       add('Not mobile-friendly','Mobile Redesign',22);
+    if (psi.seo<60)        add('Poor SEO score','Local SEO',20);
+    else if(psi.seo<80)    add('Weak SEO (60-80)','Local SEO',10);
+    if (!psi.https)        add('No HTTPS','Website Fix',14);
+  }
+  if (h) {
+    if (!h.hasBooking)     add('No online booking','Website Feature',18);
+    if (h.socialN===0)     add('No social media links','Social Media Mktg',15);
+    else if(h.socialN===1) add('Weak social presence','Social Media Mktg',7);
+    if (!h.hasGA&&!h.hasFBPx) add('No analytics/tracking','Digital Marketing',10);
+    if (!h.hasSchema)      add('No schema markup','Local SEO',8);
+    if (!h.hasOG)          add('No OG/social tags','SEO Fix',5);
+    if (h.isOld)           add('Outdated website design','Website Redesign',20);
+    if (!h.hasPhone&&!h.hasWA) add('No contact info visible','Website Fix',8);
+    if (!h.hasForm)        add('No contact form','Website Feature',7);
+    if (!h.hasMeta)        add('No meta description','SEO Fix',7);
+    if (h.h1count===0)     add('No H1 heading','SEO Fix',5);
+    if (!h.hasVP&&!psi?.mobile) add('No responsive viewport','Website Fix',10);
+  }
+  if (!issues.length) issues.push('Looks good ✓');
+
+  // Build pitch from top services
+  const s=[...svcs];
+  let pitch = 'Website audit consultation.';
+  if (!exists) pitch='Build a new website — zero online presence.';
+  else if(s.includes('Website Redesign')&&s.includes('Local SEO')) pitch='Website redesign + Local SEO package — both urgently needed.';
+  else if(s.includes('Mobile Redesign')) pitch='Mobile-first website redesign — 70%+ visitors are on phones.';
+  else if(s.includes('Website Redesign')) pitch='Website redesign — outdated or very slow.';
+  else if(s.includes('Local SEO')&&s.includes('Social Media Mktg')) pitch='Local SEO + Social Media management bundle.';
+  else if(s.includes('Local SEO')) pitch='Local SEO & Google Business Profile optimisation.';
+  else if(s.includes('Social Media Mktg')) pitch='Social media marketing setup + ongoing management.';
+  else if(s.includes('Speed Optimisation')) pitch='Speed optimisation — slow pages lose bookings.';
+  else if(s.length>0) pitch=`${s[0]} — multiple issues found.`;
+
+  return { issues, services:[...svcs], score:Math.min(sc,100), pitch };
+}
+
+function priLabel(sc){ return sc>=50?{l:'HIGH',c:'h'}:sc>=25?{l:'MED',c:'m'}:{l:'LOW',c:'l'}; }
+function scoreClass(n){ if(n===null||n===undefined||n==='')return 'na'; return n>=70?'good':n>=50?'warn':'bad'; }
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function getVal(row, col){ return col ? String(row[col]||'').trim() : ''; }
+
+// ═══════════════════════════════════════════
+// MAIN AUDIT RUNNER
+// ═══════════════════════════════════════════
+async function startAudit() {
+  if (!rawRows.length){ alert('Load a file first.'); return; }
+  if (!mappingConfirmed){ alert('Confirm column mapping first.'); return; }
+
+  const apiKey = document.getElementById('apiKey').value.trim();
+  const conc   = parseInt(document.getElementById('concurrency').value)||3;
+  const doSpeed   = document.querySelector('[data-check="speed"]').checked;
+
+  allResults=[];
+  document.getElementById('logBox').innerHTML='';
+  document.getElementById('progSection').classList.add('show');
+  document.getElementById('statsRow').classList.remove('show');
+  document.getElementById('fbar').classList.remove('show');
+  document.getElementById('tblWrap').classList.remove('show');
+  document.getElementById('bkSection').classList.remove('show');
+  document.getElementById('runBtn').disabled=true;
+  document.getElementById('runBtn').textContent='⏳ AUDITING...';
+  document.getElementById('progTitle').textContent='Auditing businesses...';
+
+  const total=rawRows.length;
+  let done=0;
+
+  async function auditOne(row) {
+    const name   = getVal(row, colMap.name)  || `Row ${done+1}`;
+    let   rawUrl = getVal(row, colMap.website);
+    const phone  = getVal(row, colMap.phone);
+    const suburb = getVal(row, colMap.address);
+
+    let url = rawUrl.trim();
+    if (url && !url.startsWith('http')) url = 'https://' + url;
+
+    log(`Checking: ${name.slice(0,45)}`);
+
+    let exists=false, psi=null, h={}, html=null;
+
+    if (url) {
+      // ── Step 1: Check PSI first (works for any public URL, no CORS issues)
+      // PSI itself confirms the site exists AND gives us scores in one call
+      if (doSpeed) {
+        psi = await checkPSI(url, apiKey);
+        if (psi) {
+          exists = true; // PSI succeeded = site is live
+          log(`  PSI ✓ ${name.slice(0,30)} perf:${psi.perf} seo:${psi.seo}`, 'ok');
+        }
+      }
+
+      // ── Step 2: Fetch HTML for deeper checks (social, booking, contact, schema etc.)
+      // Try multiple CORS proxies in sequence
+      if (!html) {
+        const proxies = [
+          `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+          `https://corsproxy.io/?${encodeURIComponent(url)}`,
+          `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+          `https://thingproxy.freeboard.io/fetch/${encodeURIComponent(url)}`,
+        ];
+        for (const proxy of proxies) {
+          try {
+            const r = await fetch(proxy, { signal: AbortSignal.timeout(12000) });
+            if (r.ok) {
+              const text = await r.text();
+              // Validate we got real HTML not a proxy error page
+              if (text.length > 500 && (text.includes('<html') || text.includes('<body') || text.includes('<head'))) {
+                html = text;
+                if (!exists) exists = true;
+                break;
+              }
+            }
+          } catch {}
+        }
+      }
+
+      // ── Step 3: If PSI failed and proxies failed, try a lightweight status check
+      if (!exists) {
+        try {
+          // Use PSI without key as a pure existence check (free tier, no auth needed)
+          const r = await fetch(
+            `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=mobile`,
+            { signal: AbortSignal.timeout(20000) }
+          );
+          if (r.ok) {
+            const d = await r.json();
+            if (d?.lighthouseResult) {
+              exists = true;
+              // Extract basic info even without API key
+              const cats = d.lighthouseResult.categories || {};
+              const au   = d.lighthouseResult.audits || {};
+              if (!psi) psi = {
+                perf: Math.round((cats.performance?.score||0)*100),
+                seo:  Math.round((cats.seo?.score||0)*100),
+                a11y: Math.round((cats.accessibility?.score||0)*100),
+                best: Math.round((cats['best-practices']?.score||0)*100),
+                lcp:  Math.round(au['largest-contentful-paint']?.numericValue||0),
+                mobile: au['viewport']?.score===1,
+                meta:   au['meta-description']?.score===1,
+                title:  au['document-title']?.score===1,
+                https:  au['is-on-https']?.score===1,
+              };
+            }
+          }
+        } catch {}
+      }
+
+      // ── Step 4: Parse HTML if we got it
+      if (html) h = parseHTML(html, url);
+
+      // ── Step 5: If PSI and proxy both failed but URL exists in data,
+      // trust Apify — it only scrapes sites it could reach
+      if (!exists && url && url.length > 10) {
+        exists = true;
+        h = { isHttps: url.startsWith('https://') };
+        log(`  ⚠ ${name.slice(0,30)} — couldn't fetch HTML (blocked), site likely exists`, 'warn');
+      }
+    }
+
+    const { issues, services, score, pitch } = scoreAndCategorise(psi, exists?h:null, exists);
+    const result = { name, url, phone, suburb, exists, psi, h, issues, services, score, pitch };
+    allResults.push(result);
+
+    done++;
+    const pct=Math.round(done/total*100);
+    document.getElementById('progBar').style.width=pct+'%';
+    document.getElementById('progCount').textContent=`${done} / ${total}`;
+
+    const p=priLabel(score);
+    const speedStr = psi?`⚡${psi.perf}% `:'';
+    const seoStr   = psi?`🔍${psi.seo}% `:'';
+    log(`  ✓ ${name.slice(0,35)} — ${speedStr}${seoStr}[${p.l}:${score}] ${issues[0]}`,
+        score>=50?'err':score>=25?'warn':'ok');
+  }
+
+  // Batch with concurrency
+  for (let i=0; i<total; i+=conc) {
+    await Promise.all(rawRows.slice(i,i+conc).map(auditOne));
+  }
+
+  log(`✅ Done — ${total} businesses audited.`, 'ok');
+  document.getElementById('runBtn').disabled=false;
+  document.getElementById('runBtn').textContent='▶ RUN AUDIT';
+  document.getElementById('hdrStat').innerHTML=
+    `<b style="color:var(--green2)">${total} audited</b> &nbsp;·&nbsp; <b style="color:var(--red)">${allResults.filter(r=>r.score>=50).length} high priority</b>`;
+
+  renderStats(); renderTable(allResults); renderBreakdown();
+  document.getElementById('statsRow').classList.add('show');
+  document.getElementById('fbar').classList.add('show');
+  document.getElementById('tblWrap').classList.add('show');
+  document.getElementById('bkSection').classList.add('show');
+}
+
+// ═══════════════════════════════════════════
+// RENDER TABLE
+// ═══════════════════════════════════════════
+function renderTable(data) {
+  filtered=data;
+  const tbody=document.getElementById('tblBody');
+  tbody.innerHTML='';
+  if(!data.length){ tbody.innerHTML='<tr><td colspan="16" style="text-align:center;padding:32px;color:var(--dim)">No results.</td></tr>'; return; }
+
+  data.forEach((r,i)=>{
+    const p=priLabel(r.score);
+    const s=r.psi; const h=r.h||{};
+    const mobileOk = s?.mobile || h.hasVP;
+    const httpsOk  = s?.https  || h.isHttps;
+
+    const tagHtml = r.issues.slice(0,3).map(iss=>{
+      const c = iss.includes('good')?'g':iss.includes('Weak')||iss.includes('Slow')||iss.includes('No ')?'a':'r';
+      return `<span class="tag ${c}">${esc(iss)}</span>`;
+    }).join('');
+
+    const socialStr = r.exists ? [
+      h.hasFB?'<span title="Facebook" style="color:#4267B2;font-size:11px">FB</span>':'<span style="opacity:.2;font-size:11px">FB</span>',
+      h.hasIG?'<span title="Instagram" style="color:#E1306C;font-size:11px">IG</span>':'<span style="opacity:.2;font-size:11px">IG</span>',
+      h.hasTW?'<span title="X/Twitter" style="font-size:11px">X</span>':'',
+      h.hasYT?'<span title="YouTube" style="color:#FF0000;font-size:11px">YT</span>':'',
+    ].join(' ') : '—';
+
+    const tr=document.createElement('tr');
+    tr.innerHTML=`
+      <td style="color:var(--dim);font-family:var(--mono);font-size:10px">${i+1}</td>
+      <td class="td-name">${esc(r.name)}</td>
+      <td class="td-url">${r.url?`<a href="${esc(r.url)}" target="_blank">${esc(r.url.replace(/^https?:\/\/(www\.)?/,'').slice(0,26))}</a>`:'<span style="color:var(--red);font-size:11px">No website</span>'}</td>
+      <td style="font-family:var(--mono);font-size:10px;color:${r.foundEmail?'var(--green2)':'var(--dim)'};">${r.foundEmail?`<a href="mailto:${esc(r.foundEmail)}" style="color:var(--green2);text-decoration:none;">${esc(r.foundEmail)}</a>`:'<span style="opacity:.4">—</span>'}</td>
+      <td style="font-family:var(--mono);font-size:10px;color:var(--muted)">${esc(r.phone)}</td>
+      <td><span class="pill ${scoreClass(s?.perf)}">${s?s.perf:'—'}</span></td>
+      <td><span class="pill ${scoreClass(s?.seo)}">${s?s.seo:'—'}</span></td>
+      <td><span class="${mobileOk?'ck-ok':'ck-no'}">${r.exists?(mobileOk?'✓':'✗'):'—'}</span></td>
+      <td><span class="${httpsOk?'ck-ok':'ck-no'}">${r.exists?(httpsOk?'✓':'✗'):'—'}</span></td>
+      <td style="font-size:11px">${socialStr}</td>
+      <td><span class="${h.hasBooking?'ck-ok':'ck-no'}">${r.exists?(h.hasBooking?'✓':'✗'):'—'}</span></td>
+      <td><span class="${(h.hasPhone||h.hasWA)?'ck-ok':h.hasEmail?'ck-mid':'ck-no'}">${r.exists?((h.hasPhone||h.hasWA)?'✓':h.hasEmail?'~':'✗'):'—'}</span></td>
+      <td><span class="${(h.hasGA||h.hasFBPx)?'ck-ok':'ck-no'}">${r.exists?((h.hasGA||h.hasFBPx)?'✓':'✗'):'—'}</span></td>
+      <td><span class="${h.hasSchema?'ck-ok':'ck-no'}">${r.exists?(h.hasSchema?'✓':'✗'):'—'}</span></td>
+      <td><div class="tags">${tagHtml}</div></td>
+      <td><span class="pri ${p.c}">${p.l} ${r.score}</span></td>
+      <td style="font-size:11px;color:var(--muted);max-width:160px">${esc(r.pitch)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// ═══════════════════════════════════════════
+// STATS, FILTER, SORT, BREAKDOWN
+// ═══════════════════════════════════════════
+function renderStats() {
+  const d=allResults, n=d.length;
+  document.getElementById('s0').textContent = d.filter(r=>!r.exists).length;
+  document.getElementById('s1').textContent = d.filter(r=>r.psi&&r.psi.perf<70).length;
+  document.getElementById('s2').textContent = d.filter(r=>r.exists&&r.psi&&!r.psi.mobile).length;
+  document.getElementById('s3').textContent = d.filter(r=>r.psi&&r.psi.seo<70).length;
+  document.getElementById('s4').textContent = d.filter(r=>r.exists&&r.h&&r.h.socialN===0).length;
+  document.getElementById('s5').textContent = d.filter(r=>r.exists&&r.h&&!r.h.hasBooking).length;
+  document.getElementById('s6').textContent = d.filter(r=>r.exists&&r.h&&!r.h.isHttps&&!(r.psi?.https)).length;
+  document.getElementById('s7').textContent = d.filter(r=>r.score>=50).length;
+}
+
+function applyFilter(type, btn) {
+  document.querySelectorAll('.fbtn').forEach(b=>b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  let data=allResults;
+  if(type==='no-website')  data=allResults.filter(r=>!r.exists);
+  else if(type==='slow')   data=allResults.filter(r=>r.psi?.perf<70);
+  else if(type==='no-mobile') data=allResults.filter(r=>r.exists&&r.psi&&!r.psi.mobile);
+  else if(type==='poor-seo')  data=allResults.filter(r=>r.psi?.seo<70);
+  else if(type==='no-social') data=allResults.filter(r=>r.exists&&r.h?.socialN===0);
+  else if(type==='no-booking')data=allResults.filter(r=>r.exists&&!r.h?.hasBooking);
+  else if(type==='no-https')  data=allResults.filter(r=>r.exists&&!r.h?.isHttps&&!r.psi?.https);
+  else if(type==='high')   data=allResults.filter(r=>r.score>=50);
+  renderTable(data);
+}
+
+function doSort(key) {
+  if(sortKey===key) sortDir*=-1; else{sortKey=key;sortDir=-1;}
+  const sorted=[...filtered].sort((a,b)=>{
+    const av = key==='speed'?(a.psi?.perf??-1):key==='seo'?(a.psi?.seo??-1):a.score;
+    const bv = key==='speed'?(b.psi?.perf??-1):key==='seo'?(b.psi?.seo??-1):b.score;
+    return (av-bv)*sortDir;
+  });
+  renderTable(sorted);
+}
+
+function renderBreakdown() {
+  const d=allResults, n=d.length;
+  const cats=[
+    {lbl:'No Website',         cnt:d.filter(r=>!r.exists).length,                         c:'r', pitch:'→ Website Design ($1,200)'},
+    {lbl:'Slow / Bad Speed',   cnt:d.filter(r=>r.psi?.perf<70).length,                    c:'r', pitch:'→ Speed Opt or Redesign'},
+    {lbl:'Not Mobile-Friendly',cnt:d.filter(r=>r.exists&&r.psi&&!r.psi.mobile).length,    c:'r', pitch:'→ Mobile-First Redesign'},
+    {lbl:'Poor SEO',           cnt:d.filter(r=>r.psi?.seo<70).length,                     c:'a', pitch:'→ Local SEO ($299+/mo)'},
+    {lbl:'No Social Links',    cnt:d.filter(r=>r.exists&&r.h?.socialN===0).length,         c:'a', pitch:'→ Social Media Mktg ($349+/mo)'},
+    {lbl:'No Online Booking',  cnt:d.filter(r=>r.exists&&!r.h?.hasBooking).length,         c:'a', pitch:'→ Website Feature / Redesign'},
+    {lbl:'No Analytics',       cnt:d.filter(r=>r.exists&&!r.h?.hasGA&&!r.h?.hasFBPx).length,c:'a',pitch:'→ Digital Marketing Setup'},
+    {lbl:'No Schema Markup',   cnt:d.filter(r=>r.exists&&!r.h?.hasSchema).length,          c:'a', pitch:'→ Local SEO + Schema'},
+    {lbl:'No Meta Description',cnt:d.filter(r=>r.exists&&!r.h?.hasMeta&&!r.psi?.meta).length,c:'b',pitch:'→ SEO Audit + Fix'},
+    {lbl:'No OG / Social Tags',cnt:d.filter(r=>r.exists&&!r.h?.hasOG).length,              c:'b', pitch:'→ SEO + Social Setup'},
+    {lbl:'No HTTPS',           cnt:d.filter(r=>r.exists&&!r.h?.isHttps&&!r.psi?.https).length,c:'r',pitch:'→ Website Fix / Rebuild'},
+    {lbl:'Outdated Design',    cnt:d.filter(r=>r.h?.isOld).length,                         c:'r', pitch:'→ Full Website Redesign'},
+  ];
+  const grid=document.getElementById('bkGrid');
+  grid.innerHTML=cats.map(cat=>{
+    const pct=n>0?Math.round(cat.cnt/n*100):0;
+    return `<div class="bk-card">
+      <div class="bk-lbl">${cat.lbl}</div>
+      <div class="bk-bar-w"><div class="bk-bar ${cat.c}" style="width:${pct}%"></div></div>
+      <div class="bk-stats"><span class="bk-cnt">${cat.cnt}<span style="color:var(--dim);font-weight:400"> / ${n}</span></span><span class="bk-pct">${pct}%</span></div>
+      <div class="bk-pitch">${cat.pitch}</div>
+    </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════
+// EMAIL EXTRACTION
+// ═══════════════════════════════════════════
+const SKIP_EMAIL_DOMAINS = new Set([
+  'example.com','sentry.io','wixpress.com','squarespace.com','wordpress.com',
+  'wordpress.org','googletagmanager.com','schema.org','w3.org','cloudflare.com',
+  'jquery.com','facebook.com','twitter.com','instagram.com','linkedin.com',
+  'youtube.com','google.com','apple.com','microsoft.com','adobedtm.com',
+  'gravatar.com','gmpg.org','yoast.com','elementor.com','woocommerce.com',
+  'hotjar.com','intercom.io','hubspot.com','mailchimp.com','sendgrid.net'
+]);
+
+function extractEmailsFromHTML(html, baseDomain) {
+  if (!html) return null;
+  // 1. mailto links — most reliable
+  const mailtoMatches = html.match(/mailto:([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/gi) || [];
+  const mailtoEmails = mailtoMatches.map(m => m.replace(/mailto:/i,'').toLowerCase().trim());
+  // 2. plain email pattern
+  const plainMatches = html.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g) || [];
+  const plainEmails  = plainMatches.map(e => e.toLowerCase().trim());
+  // combine + filter
+  const all = [...new Set([...mailtoEmails, ...plainEmails])].filter(e => {
+    const domain = e.split('@')[1];
+    if (!domain) return false;
+    if (SKIP_EMAIL_DOMAINS.has(domain)) return false;
+    if (/noreply|no-reply|donotreply|unsubscribe|privacy|legal|support@google|support@apple/.test(e)) return false;
+    if (e.length > 70 || e.length < 6) return false;
+    return true;
+  });
+  if (!all.length) return null;
+  // prefer same domain
+  const base = (baseDomain||'').replace('www.','');
+  const own = all.filter(e => base && e.split('@')[1].includes(base.split('.')[0]));
+  const preferred = ['info','hello','reception','admin','contact','enquiries','appointments','dental','clinic'];
+  const best = (own.length ? own : all).sort((a,b) => {
+    const aP = preferred.findIndex(p => a.startsWith(p)); 
+    const bP = preferred.findIndex(p => b.startsWith(p));
+    return (aP===-1?99:aP) - (bP===-1?99:bP);
+  });
+  return best[0] || null;
+}
+
+async function extractEmailForOne(result) {
+  if (!result.url) return null;
+  const baseDomain = result.url.replace(/^https?:\/\/(www\.)?/,'').split('/')[0];
+  const base = result.url.replace(/\/$/, '');
+  const pagesToTry = [
+    base + '/contact', base + '/contact-us',
+    base + '/about',   base + '/about-us', base,
+  ];
+  const proxies = [
+    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+    u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+  ];
+  for (const pageUrl of pagesToTry) {
+    for (const proxyFn of proxies) {
+      try {
+        const r = await fetch(proxyFn(pageUrl), { signal: AbortSignal.timeout(10000) });
+        if (r.ok) {
+          const text = await r.text();
+          if (text.length > 200) {
+            const email = extractEmailsFromHTML(text, baseDomain);
+            if (email) return email;
+          }
+        }
+      } catch {}
+    }
+  }
+  return null;
+}
+
+async function extractEmails() {
+  if (!allResults.length) { alert('Run the audit first.'); return; }
+  const btn = document.getElementById('emailBtn');
+  btn.disabled = true; btn.textContent = '⏳ Extracting...';
+  const prog = document.getElementById('emailProgress');
+  const bar  = document.getElementById('emailBar');
+  const cnt  = document.getElementById('emailCount');
+  const logEl= document.getElementById('emailLog');
+  prog.style.display = 'block'; logEl.innerHTML = '';
+
+  const targets = allResults.filter(r => r.exists && r.url);
+  const total = targets.length;
+  let done = 0, found = 0;
+
+  function eLog(msg, color='') {
+    const d = document.createElement('div');
+    d.style.color = color || 'var(--muted)';
+    d.textContent = msg;
+    logEl.appendChild(d);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  eLog(`Extracting emails from ${total} clinic websites...`, 'var(--amber)');
+
+  for (let i = 0; i < targets.length; i += 3) {
+    const batch = targets.slice(i, i + 3);
+    await Promise.all(batch.map(async r => {
+      if (r.foundEmail) { done++; found++; return; } // already found
+      const email = await extractEmailForOne(r);
+      r.foundEmail = email || '';
+      done++;
+      if (email) { found++; eLog(`  ✓ ${r.name.slice(0,38)} → ${email}`, 'var(--green2)'); }
+      else        { eLog(`  — ${r.name.slice(0,38)} → not found`); }
+      bar.style.width = Math.round(done/total*100) + '%';
+      cnt.textContent = `${done} / ${total}  (${found} found)`;
+    }));
+  }
+
+  eLog(`\n✅ Complete — found ${found} emails out of ${total} websites`, 'var(--green2)');
+  btn.disabled = false;
+  btn.textContent = `📧 Re-extract Emails`;
+  btn.style.cssText += ';background:var(--green-dim);color:var(--green2);border-color:rgba(45,158,95,.4);';
+  renderTable(filtered.length ? filtered : allResults);
+}
+
+// ═══════════════════════════════════════════
+// EXPORT CSV
+// ═══════════════════════════════════════════
+function exportCSV() {
+  if(!allResults.length) return;
+  const cols=['Name','Website','Email Found','Phone','Suburb','Speed','SEO','Mobile','HTTPS',
+    'Facebook','Instagram','Booking','Analytics','Schema','Meta Desc','Issues',
+    'Services','Priority Score','Priority','Pitch'];
+  const rows=allResults.map(r=>{
+    const s=r.psi; const h=r.h||{}; const p=priLabel(r.score);
+    return [
+      r.name, r.url, r.foundEmail||'', r.phone, r.suburb,
+      s?.perf??'', s?.seo??'',
+      (s?.mobile||h.hasVP)?'Yes':'No',
+      (s?.https||h.isHttps)?'Yes':'No',
+      h.hasFB?'Yes':'No', h.hasIG?'Yes':'No',
+      h.hasBooking?'Yes':'No',
+      (h.hasGA||h.hasFBPx)?'Yes':'No',
+      h.hasSchema?'Yes':'No',
+      (s?.meta||h.hasMeta)?'Yes':'No',
+      r.issues.join(' | '), r.services.join(' | '),
+      r.score, p.l, r.pitch
+    ].map(v=>`"${String(v||'').replace(/"/g,'""')}"`).join(',');
+  });
+  const csv=[cols.join(','),...rows].join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download=`leafy_audit_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+</script>
+</body>
+</html>

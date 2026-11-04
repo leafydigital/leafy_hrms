@@ -1,0 +1,34 @@
+# robots.txt — Leafy Digital (leafydigital.in)
+# https://leafydigital.in/robots.txt
+
+User-agent: *
+Allow: /
+
+# Disallow internal/utility files
+Disallow: /404.html
+
+# Sitemap location
+Sitemap: https://leafydigital.in/sitemap.xml
+
+# Crawl-delay for polite bots
+Crawl-delay: 10
+
+# Allow major search engine bots explicitly
+User-agent: Googlebot
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: DuckDuckBot
+Allow: /
+
+User-agent: facebot
+Allow: /
+
+User-agent: Twitterbot
+Allow: /
+
+User-agent: LinkedInBot
+Allow: /
+Disallow: /hrms/

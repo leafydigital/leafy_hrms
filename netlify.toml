@@ -1,0 +1,22 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+  # Set in Netlify > Site configuration > Environment variables:
+  #   VITE_API_URL = https://api.leafydigital.in      (your deployed HRMS API)
+
+# HRMS single-page app: any /hrms/... URL that is not a real file loads the app.
+# (Real files such as /hrms/sw.js and /hrms/logo-white.png are served first.)
+[[redirects]]
+  from = "/hrms"
+  to = "/hrms/"
+  status = 301
+
+[[redirects]]
+  from = "/hrms/*"
+  to = "/index.html"
+  status = 200
+
+# Everything else that doesn't exist falls through to public/404.html automatically.
