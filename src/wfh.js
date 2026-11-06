@@ -37,8 +37,8 @@ async function decisionEmail(emp, status, dates, note, reviewer) {
   const subject = status === 'approved' ? `Work from home approved (${dates.length} day${dates.length > 1 ? 's' : ''})` : 'Work from home request rejected'
   await sendEmail({
     to: emp.email, subject: `${subject} · Leafy Digital HRMS`,
-    text: `Hi ${emp.full_name},\n\nYour work-from-home request was ${status} by ${reviewer.full_name}.${status === 'approved' ? `\nApproved days:\n- ${list.join('\n- ')}\n\nWFH check-in/check-out is available 09:00–22:00 IST on these days.` : ''}${note ? `\nNote: ${note}` : ''}\n\nLeafy Digital HRMS`,
-    html: `<p>Hi ${safeHtml(emp.full_name)},</p><p>Your work-from-home request was <b>${safeHtml(status)}</b> by ${safeHtml(reviewer.full_name)}.</p>${status === 'approved' ? `<p>Approved days:</p><ul>${list.map((d) => `<li>${safeHtml(d)}</li>`).join('')}</ul><p>WFH check-in/check-out is available 09:00–22:00 IST on these days.</p>` : ''}${note ? `<p>Note: ${safeHtml(note)}</p>` : ''}<p>Leafy Digital HRMS</p>`,
+    text: `Hi ${emp.full_name},\n\nYour work-from-home request was ${status} by ${reviewer.full_name}.${status === 'approved' ? `\nApproved days:\n- ${list.join('\n- ')}\n\nWFH check-in/check-out is available 08:00–22:00 IST on these days.` : ''}${note ? `\nNote: ${note}` : ''}\n\nLeafy Digital HRMS`,
+    html: `<p>Hi ${safeHtml(emp.full_name)},</p><p>Your work-from-home request was <b>${safeHtml(status)}</b> by ${safeHtml(reviewer.full_name)}.</p>${status === 'approved' ? `<p>Approved days:</p><ul>${list.map((d) => `<li>${safeHtml(d)}</li>`).join('')}</ul><p>WFH check-in/check-out is available 08:00–22:00 IST on these days.</p>` : ''}${note ? `<p>Note: ${safeHtml(note)}</p>` : ''}<p>Leafy Digital HRMS</p>`,
   }).catch((e) => console.error('WFH decision email failed:', e.message))
 }
 
@@ -46,7 +46,7 @@ async function saveDays(c, employeeId, requestId, dates, approverId) {
   for (const d of dates) {
     await c.query(
       `insert into public.wfh_days (employee_id, wfh_date, request_id, approved_by) values ($1, $2, $3, $4)
-       on conflict (employee_id, wfh_date) do update set request_id = excluded.request_id, approved_by = excluded.approved_by`,
+       on conflict (employee_id, wfh_date) do update set request_id = excluded.request_id, approved_by = excluded.approved_by, opted_out_at = null, opted_out_note = null`,
       [employeeId, d, requestId, approverId])
   }
   // A shift already started today in office mode becomes WFH if today was approved.

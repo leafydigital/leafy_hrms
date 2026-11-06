@@ -15,10 +15,16 @@ const hhmmToMin = (s, fallback) => {
 }
 export const CONFIG = {
   lateAfterMin: hhmmToMin(process.env.LATE_CHECKIN_AFTER, 9 * 60 + 30),   // 09:30 IST
-  wfhStartMin: hhmmToMin(process.env.WFH_WINDOW_START, 9 * 60),          // 09:00 IST
+  wfhStartMin: hhmmToMin(process.env.WFH_WINDOW_START, 8 * 60),          // 08:00 IST
   wfhEndMin: hhmmToMin(process.env.WFH_WINDOW_END, 22 * 60),             // 22:00 IST
   timeEditToleranceMin: Number(process.env.TIME_EDIT_TOLERANCE_MIN ?? 15),
   requireLocation: process.env.REQUIRE_LOCATION !== 'false',
+  // HRMS sign-in hours (India time). Outside these hours employees cannot sign in or use the app.
+  loginStartMin: hhmmToMin(process.env.LOGIN_WINDOW_START, 8 * 60),       // 08:00 IST
+  loginEndMin: hhmmToMin(process.env.LOGIN_WINDOW_END, 22 * 60),          // 22:00 IST
+  loginExemptRoles: (process.env.LOGIN_WINDOW_EXEMPT_ROLES ?? 'admin,hr,ceo,cto,coo').split(',').map((s) => s.trim()).filter(Boolean),
+  // Roles whose check-in never waits for approval (time, IP and location are still recorded).
+  selfApprovedRoles: (process.env.ATTENDANCE_SELF_APPROVED_ROLES || 'admin,hr,ceo,cto,coo').split(',').map((s) => s.trim()).filter(Boolean),
 }
 
 // OFFICE_IPS: comma-separated IPv4/IPv6 addresses or CIDR ranges, e.g. "49.37.232.136,2401:4900:1c2a::/48"
@@ -94,3 +100,17 @@ export async function activeEmployeesByRole(roles) {
     `select id, user_id, full_name, email from public.employees where status = 'active' and role = any($1)`, [roles])
   return rows
 }
+
+// ---------------------------------------------------------------- sign-in hours
+export const loginWindowText = () => `${fmt12h(CONFIG.loginStartMin)} – ${fmt12h(CONFIG.loginEndMin)} IST`
+function fmt12h(min) {
+  const h = Math.floor(min / 60), m = min % 60
+  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`
+}
+/** True when this role may not use the app right now (outside the sign-in hours). */
+export function outsideLoginHours(role, d = new Date()) {
+  if (CONFIG.loginExemptRoles.includes(role)) return false
+  const { minutes } = nowIST(d)
+  return minutes < CONFIG.loginStartMin || minutes >= CONFIG.loginEndMin
+}
+export const OUTSIDE_HOURS = 'outside_hours'

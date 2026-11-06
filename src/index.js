@@ -13,6 +13,9 @@ import { runQuery } from './query.js'
 import { chatRouter } from './chat.js'
 import { attendanceRouter, autoCloseWfhShifts } from './attendance.js'
 import { wfhRouter } from './wfh.js'
+import { profileRouter } from './profile.js'
+import { WEEKLY_OFF } from './leaveBalance.js'
+import { OUTSIDE_HOURS, loginWindowText, outsideLoginHours } from './common.js'
 
 const SECRET = process.env.JWT_SECRET
 if (!SECRET || SECRET.length < 32) {
@@ -26,7 +29,10 @@ app.use(helmet())
 app.use(
   cors({
     origin: (process.env.CORS_ORIGIN || '').split(',').map((s) => s.trim()).filter(Boolean),
-    allowedHeaders: ['Authorization', 'Content-Type'],
+    // X-File-Name / X-File-Type carry the name and type of chat uploads. Every custom header the browser
+    // sends to a different origin must be listed here, or the browser blocks the request before it starts.
+    allowedHeaders: ['Authorization', 'Content-Type', 'X-File-Name', 'X-File-Type'],
+    exposedHeaders: ['Content-Disposition'],
   }),
 )
 app.use(express.json({ limit: '8mb' }))
@@ -35,17 +41,34 @@ const wrap = (fn) => (req, res, next) => fn(req, res, next).catch(next)
 const fail = (res, status, message, extra = {}) => res.status(status).json({ error: message, ...extra })
 const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 10) // keeps login timing the same for unknown emails
 
+// Role per login, cached for a minute, so every request can apply the sign-in hours cheaply.
+const roleCache = new Map() // uid -> { role, at }
+async function roleOf(uid) {
+  const hit = roleCache.get(uid)
+  if (hit && Date.now() - hit.at < 60000) return hit.role
+  const { rows } = await pool.query('select role from public.employees where user_id = $1', [uid])
+  const role = rows[0]?.role ?? null
+  roleCache.set(uid, { role, at: Date.now() })
+  return role
+}
+const hoursMessage = () => `Leafy HRMS is available from ${loginWindowText()}. Please sign in again during those hours.`
+
 function auth(req, res, next) {
   const h = req.headers.authorization || ''
   if (!h.startsWith('Bearer ')) return fail(res, 401, 'Not signed in')
+  let p
   try {
-    const p = jwt.verify(h.slice(7), SECRET)
-    req.uid = p.sub
-    req.email = p.email
-    next()
+    p = jwt.verify(h.slice(7), SECRET)
   } catch {
-    fail(res, 401, 'Your session has expired. Please sign in again.')
+    return fail(res, 401, 'Your session has expired. Please sign in again.')
   }
+  req.uid = p.sub
+  req.email = p.email
+  // Outside sign-in hours (8 AM – 10 PM by default), employees are signed out on their next request.
+  roleOf(p.sub).then((role) => {
+    if (outsideLoginHours(role)) return fail(res, 403, hoursMessage(), { code: OUTSIDE_HOURS })
+    next()
+  }).catch(next)
 }
 
 app.get('/api/health', async (_req, res) => {
@@ -64,7 +87,7 @@ app.post('/api/auth/login', loginLimiter, wrap(async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase()
   const password = String(req.body?.password || '')
   const { rows } = await pool.query(
-    `select u.id, u.email, u.password_hash from public.users u
+    `select u.id, u.email, u.password_hash, e.role from public.users u
        join public.employees e on e.user_id = u.id
       where lower(u.email) = $1 and e.status = 'active'`,
     [email],
@@ -72,6 +95,7 @@ app.post('/api/auth/login', loginLimiter, wrap(async (req, res) => {
   const user = rows[0]
   const ok = await bcrypt.compare(password, user?.password_hash ?? DUMMY_HASH)
   if (!user || !ok) return fail(res, 401, 'Invalid login credentials')
+  if (outsideLoginHours(user.role)) return fail(res, 403, hoursMessage(), { code: OUTSIDE_HOURS })
   const token = jwt.sign({ sub: user.id, email: user.email }, SECRET, { expiresIn: '12h' })
   res.json({ access_token: token, user: { id: user.id, email: user.email } })
 }))
@@ -330,7 +354,7 @@ app.post('/api/admin/payroll-lop-summary', auth, wrap(async (req, res) => {
     let days = 0
     for (let cursor = new Date(`${start}T00:00:00Z`), stop = new Date(`${end}T00:00:00Z`); cursor <= stop; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
       const iso = cursor.toISOString().slice(0, 10)
-      if (cursor.getUTCDay() !== 0 && !holidays.has(iso)) days += 1
+      if (!WEEKLY_OFF.includes(cursor.getUTCDay()) && !holidays.has(iso)) days += 1
     }
     if (leave.half_day && start === end && days > 0) days = 0.5
     lop_days[leave.employee_id] = (lop_days[leave.employee_id] || 0) + days
@@ -384,6 +408,7 @@ cron.schedule('0 18 * * *', async () => {
 app.use('/api/attendance', attendanceRouter(auth))
 app.use('/api/wfh', wfhRouter(auth))
 app.use('/api/chat', chatRouter(auth))
+app.use('/api/profile', profileRouter(auth))
 
 // 22:00 IST: work-from-home access ends — close WFH shifts that are still open.
 cron.schedule(`${Number((process.env.WFH_WINDOW_END || '22:00').split(':')[1] || 0)} ${Number((process.env.WFH_WINDOW_END || '22:00').split(':')[0])} * * *`, async () => {

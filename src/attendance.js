@@ -22,10 +22,16 @@ function readLocation(body) {
   return { lat, lng, accuracy: Number.isFinite(accuracy) && accuracy >= 0 ? Math.round(accuracy * 10) / 10 : null }
 }
 
-async function isWfhDay(employeeId, date) {
-  const { rowCount } = await pool.query('select 1 from public.wfh_days where employee_id = $1 and wfh_date = $2', [employeeId, date])
-  return rowCount > 0
+async function wfhDay(employeeId, date) {
+  const { rows } = await pool.query('select * from public.wfh_days where employee_id = $1 and wfh_date = $2', [employeeId, date])
+  return rows[0] || null
 }
+/** Approved WFH for that day that the employee has not switched back to office. */
+async function isWfhDay(employeeId, date) {
+  const d = await wfhDay(employeeId, date)
+  return !!d && !d.opted_out_at
+}
+const isSelfApproved = (me) => CONFIG.selfApprovedRoles.includes(me.role)
 
 const inWfhWindow = (minutes) => minutes >= CONFIG.wfhStartMin && minutes < CONFIG.wfhEndMin
 const wfhWindowText = () => `${fmtHHMM(CONFIG.wfhStartMin)}–${fmtHHMM(CONFIG.wfhEndMin)} IST`
@@ -59,9 +65,9 @@ export function attendanceRouter(auth) {
     const now = new Date()
     const { date, minutes } = nowIST(now)
     const ip = clientIp(req)
-    const [row, wfhToday, brk, leave] = await Promise.all([
+    const [row, wfhRow, brk, leave] = await Promise.all([
       todayRow(req.me.id, date),
-      isWfhDay(req.me.id, date),
+      wfhDay(req.me.id, date),
       openBreak(req.me.id),
       pool.query(`select l.id, l.half_day, t.name from public.leaves l join public.leave_types t on t.id = l.leave_type_id
                    where l.employee_id = $1 and l.status = 'approved' and $2::date between l.start_date and l.end_date limit 1`, [req.me.id, date]),
@@ -69,9 +75,12 @@ export function attendanceRouter(auth) {
     const breaks = row
       ? (await pool.query('select * from public.attendance_breaks where attendance_id = $1 order by started_at', [row.id])).rows
       : []
+    const wfhToday = !!wfhRow && !wfhRow.opted_out_at
     res.json({
       server_time: now.toISOString(), date, minutes, ip,
       office_network: isOfficeIp(ip), wfh_today: wfhToday,
+      wfh_approved_today: !!wfhRow, wfh_opted_out: !!wfhRow?.opted_out_at,
+      approval_exempt: isSelfApproved(req.me),
       wfh_window_open: inWfhWindow(minutes),
       row, breaks, open_break: brk, approved_leave: leave.rows[0] || null,
       rules: {
@@ -112,12 +121,14 @@ export function attendanceRouter(auth) {
     if (Math.abs(typed.getTime() - now.getTime()) > CONFIG.timeEditToleranceMin * 60 * 1000) reasons.push('time_edited')
     if (!wfh && !office) reasons.push('other_network')
     const reason = String(body.reason || '').trim()
-    if (reasons.length && reason.length < 3) {
+    const exempt = isSelfApproved(me)
+    if (!exempt && reasons.length && reason.length < 3) {
       return fail(res, 400, 'Please give a reason. This check-in needs HR approval.', {
         field: 'reason', reasons, reason_labels: reasons.map((x) => REASON_LABEL[x]),
       })
     }
-    const pending = reasons.length > 0
+    // Admin / HR / senior leadership: no approval step, but the reasons are still kept for the record.
+    const pending = !exempt && reasons.length > 0
 
     const values = {
       check_in: typed.toISOString(), check_in_system: now.toISOString(), check_in_ip: ip,
@@ -190,7 +201,7 @@ export function attendanceRouter(auth) {
     }
     const edited = Math.abs(typed.getTime() - now.getTime()) > CONFIG.timeEditToleranceMin * 60 * 1000
     const reason = String(body.reason || '').trim()
-    if (edited && reason.length < 3) {
+    if (edited && reason.length < 3 && !isSelfApproved(me)) {
       return fail(res, 400, `Your typed time differs from the actual time by more than ${CONFIG.timeEditToleranceMin} minutes. Please give a reason.`, { field: 'reason' })
     }
     await pool.query('update public.attendance_breaks set ended_at = $2 where employee_id = $1 and ended_at is null', [me.id, now.toISOString()])
@@ -229,6 +240,30 @@ export function attendanceRouter(auth) {
       return res.json({ break: rows[0] })
     }
     fail(res, 400, 'Unknown break action')
+  }))
+
+  // WFH was approved for today but the employee came to the office (or the reverse, before check-in).
+  r.post('/wfh-switch', wrap(async (req, res) => {
+    const me = req.me
+    const { date, minutes } = nowIST()
+    const toOffice = req.body?.mode === 'office'
+    const d = await wfhDay(me.id, date)
+    if (!d) return fail(res, 409, 'Work from home is not approved for you today.')
+    const row = await todayRow(me.id, date)
+    if (row?.check_out) return fail(res, 409, 'You have already checked out today.')
+    if (!toOffice && row?.check_in) return fail(res, 409, 'You have already started your shift at the office today.')
+    if (!toOffice && !inWfhWindow(minutes)) return fail(res, 403, `Work-from-home is available only between ${wfhWindowText()}.`)
+    const note = String(req.body?.note || '').trim() || null
+    await pool.query(
+      `update public.wfh_days set opted_out_at = $2, opted_out_note = $3 where id = $1`,
+      [d.id, toOffice ? new Date().toISOString() : null, toOffice ? note : null])
+    if (row?.check_in && toOffice) {
+      await pool.query(`update public.attendance set work_mode = 'office', status = case when status = 'wfh' then 'present' else status end where id = $1`, [row.id])
+    }
+    postMessageSafe({ channel: 'shift-updates', senderId: me.id, kind: 'shift',
+      body: toOffice ? 'working from the office today (WFH not used)' : 'switched back to work from home today' })
+    shiftChanged()
+    res.json({ ok: true, wfh_today: !toOffice })
   }))
 
   // HR / Admin approval queue
@@ -310,19 +345,21 @@ export function attendanceRouter(auth) {
   r.post('/live', wrap(async (req, res) => {
     const { date } = nowIST()
     const { rows } = await pool.query(
-      `select e.id, e.full_name, e.reporting_to,
+      `select e.id, e.full_name, e.emp_code, e.reporting_to, d.name as department, g.name as designation,
               a.id as attendance_id, a.status, a.check_in, a.check_out, a.work_mode, a.approval_status,
               exists (select 1 from public.attendance_breaks b where b.attendance_id = a.id and b.ended_at is null) as on_break,
-              exists (select 1 from public.wfh_days w where w.employee_id = e.id and w.wfh_date = $1) as wfh_day,
+              exists (select 1 from public.wfh_days w where w.employee_id = e.id and w.wfh_date = $1 and w.opted_out_at is null) as wfh_day,
               exists (select 1 from public.leaves l where l.employee_id = e.id and l.status = 'approved'
                         and $1::date between l.start_date and l.end_date) as on_leave
          from public.employees e
+         left join public.departments d on d.id = e.department_id
+         left join public.designations g on g.id = e.designation_id
          left join public.attendance a on a.employee_id = e.id and a.date = $1
         where e.status = 'active'
         order by e.full_name`, [date])
     const groups = { in: [], on_break: [], out: [], not_in: [], on_leave: [] }
     for (const x of rows) {
-      const person = { id: x.id, full_name: x.full_name, check_in: x.check_in, check_out: x.check_out, work_mode: x.work_mode, approval_status: x.approval_status }
+      const person = { id: x.id, full_name: x.full_name, emp_code: x.emp_code, department: x.department, designation: x.designation, check_in: x.check_in, check_out: x.check_out, work_mode: x.work_mode, approval_status: x.approval_status }
       if (x.status === 'leave' || (x.on_leave && !x.check_in)) groups.on_leave.push(person)
       else if (!x.check_in) groups.not_in.push(person)
       else if (x.check_out) groups.out.push(person)

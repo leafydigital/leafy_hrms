@@ -1,6 +1,7 @@
 import { pool, asUser, friendlyError } from './db.js'
 import { sendLeaveDecisionEmail } from './mailer.js'
-import { postMessageSafe } from './chat.js'
+import { postMessageSafe, notifyEmployees } from './chat.js'
+import { countLeaveDays, isEligible, leaveBalance } from './leaveBalance.js'
 
 /**
  * A small, whitelisted query layer. The browser sends a JSON description of a query
@@ -17,6 +18,7 @@ const TABLES = {
   incomes: {}, expenses: {}, employee_directory: { readOnly: true }, employee_experiences: {},
   employee_custom_field_definitions: {}, company_holidays: {}, comp_off_ledger: {},
   attendance_breaks: { readOnly: true }, wfh_requests: { readOnly: true }, wfh_days: { readOnly: true },
+  task_activities: {},
 }
 // Columns that can never be written through the API
 const PROTECTED = {
@@ -208,6 +210,7 @@ async function run(client, spec) {
   if (action === 'insert' || action === 'upsert') {
     const rows = Array.isArray(spec.values) ? spec.values : [spec.values]
     if (!rows.length) return { data: null }
+    if (table === 'leaves') await checkLeaveRequests(client, rows)
     const cols = writableCols(table, rows)
     let sql = `insert into public.${table} (${cols.map(q).join(', ')}) values ${valuesSql(cols, rows, params)}`
     if (action === 'upsert') {
@@ -241,6 +244,38 @@ async function run(client, spec) {
   bad('Unknown action')
 }
 
+/**
+ * An employee's own leave request must fit their remaining balance (same rules as the Leave page).
+ * Leave that HR / Admin records for someone else is not limited here (they may override).
+ */
+async function checkLeaveRequests(client, rows) {
+  const meId = (await client.query('select public.current_employee_id() as id')).rows[0]?.id
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') bad('Bad row')
+    if (row.half_day && !['morning', 'afternoon'].includes(row.half_day_session)) bad('Choose morning or afternoon for a half-day leave.')
+    if (!row.half_day) row.half_day_session = null
+    if (row.employee_id !== meId) continue
+    const hol = await client.query('select holiday_date::text as d from public.company_holidays where holiday_date between $1 and $2', [row.start_date, row.end_date])
+    const days = countLeaveDays(String(row.start_date || ''), String(row.end_date || ''), !!row.half_day && row.start_date === row.end_date, hol.rows.map((h) => h.d))
+    if (days <= 0) bad('The selected dates have no working days (Saturdays, Sundays and company holidays are not counted).')
+    row.days = days
+    // One transaction client: run these one after another (pg does not allow parallel queries on a client).
+    const emp = await client.query('select date_of_joining::text, employment_type, gender from public.employees where id = $1', [meId])
+    const type = await client.query('select * from public.leave_types where id = $1', [row.leave_type_id])
+    const leaves = await client.query('select leave_type_id, start_date::text, days, status from public.leaves where employee_id = $1', [meId])
+    const comp = await client.query('select coalesce(sum(days), 0) as n from public.comp_off_ledger where employee_id = $1', [meId])
+    const t = type.rows[0]
+    if (!t) bad('Choose a leave type.')
+    if (!isEligible(t, emp.rows[0]?.gender)) bad(`${t.name} is not available for you.`)
+    const b = leaveBalance({ employee: emp.rows[0], type: t, leaves: leaves.rows, compOffEarned: Number(comp.rows[0].n), asOf: row.start_date })
+    if (b.limited && days > b.left) {
+      bad(b.left <= 0
+        ? `You have no ${t.name} left${b.period === 'month' ? ' for this month' : ''}. Choose another leave type.`
+        : `You have only ${b.left} day(s) of ${t.name} left${b.period === 'month' ? ' for this month' : ''}, but this request is ${days} day(s).`)
+    }
+  }
+}
+
 export async function runQuery(uid, spec) {
   try {
     const out = await asUser(uid, (client) => run(client, spec))
@@ -252,6 +287,9 @@ export async function runQuery(uid, spec) {
         } catch (e) { console.error('Leave notification email failed:', e.message) }
       }
     }
+    if (spec.table === 'task_activities' && spec.action === 'insert' && spec.values?.task_id) {
+      notifyTaskNote(uid, spec.values.task_id, spec.values.body).catch((e) => console.error('Task note notice failed:', e.message))
+    }
     if (spec.table === 'tasks' && (spec.action === 'insert' || (spec.action === 'update' && spec.values?.status))) {
       announceTask(uid, spec).catch((e) => console.error('Task chat post failed:', e.message))
     }
@@ -261,6 +299,18 @@ export async function runQuery(uid, spec) {
     const field = e.code === '23505' ? (String(e.constraint || '').includes('emp_code') ? 'emp_code' : String(e.constraint || '').includes('email') ? 'email' : undefined) : undefined
     return { status: 400, body: { error: { message: friendlyError(e), ...(field ? { field } : {}) } } }
   }
+}
+
+// A note on a task pops up for the assignee and the person who created the task (not the author).
+async function notifyTaskNote(uid, taskId, body) {
+  const { rows } = await pool.query(
+    `select t.title, t.assignee_id, t.created_by, a.id as author_id, a.full_name as author
+       from public.tasks t, public.employees a where t.id = $1 and a.user_id = $2`, [taskId, uid])
+  const t = rows[0]
+  if (!t) return
+  notifyEmployees([t.assignee_id, t.created_by].filter((id) => id && id !== t.author_id), {
+    title: `Note on "${t.title}"`, body: `${t.author}: ${String(body || '').slice(0, 160)}`, link: `/tasks?task=${taskId}`,
+  })
 }
 
 const TASK_STATUS = { todo: 'To do', in_progress: 'In progress', review: 'In review', done: 'Done ✅' }
