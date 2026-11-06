@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, Eye, EyeOff, MailCheck } from 'lucide-react'
-import { db } from '../lib/db'
+import { db, takeNotice } from '../lib/db'
 import { useAuth } from '../lib/useAuth'
 
 // Sign in, and forgot password: email → 4-digit code from the email → new password → back to sign in.
@@ -67,6 +67,8 @@ export default function Login() {
   const [fieldErr, setFieldErr] = useState({})
   const [notice, setNotice] = useState('')
   const [cooldown, setCooldown] = useState(0)
+  // e.g. "signed out because sign-in hours ended"
+  useEffect(() => { const n = takeNotice(); if (n) setError(n) }, [])
 
   useEffect(() => {
     if (!cooldown) return
@@ -129,7 +131,7 @@ export default function Login() {
 
   const title = { login: 'Sign in', forgot: 'Forgot password', code: 'Enter the code', newpw: 'Set a new password' }[mode]
   const subtitle = {
-    login: 'Use the work email your HR team set up for you.',
+    login: 'Use the work email your HR team set up for you. Sign-in is open 8:00 AM – 10:00 PM.',
     forgot: 'Enter your company email. We will email you a 4-digit code.',
     code: <>We sent a 4-digit code to <b className="text-ink">{email.trim()}</b>. It expires in 10 minutes.</>,
     newpw: 'Code verified. Choose a new password for your HRMS account.',
@@ -149,7 +151,7 @@ export default function Login() {
             Leafy Digital's internal HR system for leave, attendance, payroll, projects, tasks and team chat.
           </p>
         </div>
-        <p className="text-xs text-gray-500">© Leafy Digital · Internal use only</p>
+        <p className="text-xs text-gray-500">© Leafy Digital · Internal use only · Available 8:00 AM – 10:00 PM IST</p>
       </div>
 
       <div className="flex items-center justify-center p-6" style={{ paddingTop: 'max(1.5rem, env(safe-area-inset-top))' }}>

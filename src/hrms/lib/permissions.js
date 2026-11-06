@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, Users, Building2, BadgeCheck, ShieldCheck, CalendarDays, Clock, Wallet,
-  Banknote, FileText, TrendingUp, TrendingDown, Handshake, FolderKanban, ListChecks, Layers, Home, MessageSquare,
+  Banknote, FileText, TrendingUp, TrendingDown, Handshake, FolderKanban, ListChecks, Layers, Home, MessageSquare, UserCircle, CalendarHeart,
 } from 'lucide-react'
 
 // System access roles. Admin = Founder, CEO, COO, CTO, Admin designations.
@@ -27,7 +27,9 @@ export const PERMS = {
   designations: { view: [A, H], create: [A], edit: [A], remove: [A] },
   roles:        { view: [A] },
   leaves:       { view: ALL, review: LEADERS },
-  attendance:   { view: ALL, manage: [A, H], approve: [A, H] },
+  attendance:   { view: ALL, manage: [A, H], approve: [A, H], viewAll: [A, H, ...LEAD] },
+  profile:      { view: ALL },
+  holidays:     { view: ALL, manage: [A, H] },
   wfh:          { view: ALL },
   chat:         { view: ALL },
   salary:       { view: [A, H, AC], edit: [A, H, AC] },
@@ -47,6 +49,7 @@ export const NAV = [
   { group: 'Overview', items: [
     { to: '/', label: 'Dashboard', icon: LayoutDashboard, module: 'dashboard' },
     { to: '/chat', label: 'Chat', icon: MessageSquare, module: 'chat', badge: 'chat' },
+    { to: '/profile', label: 'My Profile', icon: UserCircle, module: 'profile' },
   ] },
   { group: 'People', items: [
     { to: '/employees', label: 'Employees', icon: Users, module: 'employees' },
@@ -57,6 +60,7 @@ export const NAV = [
   { group: 'Time', items: [
     { to: '/leaves', label: 'Leave', icon: CalendarDays, module: 'leaves' },
     { to: '/attendance', label: 'Attendance', icon: Clock, module: 'attendance' },
+    { to: '/holidays', label: 'Holiday calendar', icon: CalendarHeart, module: 'holidays' },
     { to: '/wfh', label: 'Work from home', icon: Home, module: 'wfh' },
   ] },
   { group: 'Pay', items: [

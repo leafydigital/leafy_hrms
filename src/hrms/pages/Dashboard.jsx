@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Banknote, CalendarCheck, CalendarDays, FolderKanban, ListChecks, TrendingDown, TrendingUp, UserCheck, Users } from 'lucide-react'
+import { Banknote, CalendarCheck, CalendarDays, FolderKanban, Home, ListChecks, TrendingDown, TrendingUp, UserCheck, Users } from 'lucide-react'
 import { db } from '../lib/db'
 import { useAuth } from '../lib/useAuth'
 import { useRefs } from '../lib/refs'
@@ -116,8 +116,9 @@ export default function Dashboard() {
                   <Link to="/attendance" className="btn btn-primary btn-sm">Check in</Link>
                 </div>
               )}
-              <div className="mt-4 flex gap-2">
-                <Link to="/leaves" className="btn btn-ghost btn-sm"><CalendarDays size={14} /> Apply for leave</Link>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Link to="/leaves?apply=1" className="btn btn-ghost btn-sm"><CalendarDays size={14} /> Apply for leave</Link>
+                <Link to="/wfh?request=1" className="btn btn-ghost btn-sm"><Home size={14} /> Request WFH</Link>
                 <Link to="/payslips" className="btn btn-ghost btn-sm">My payslips</Link>
               </div>
             </div>
@@ -149,7 +150,7 @@ export default function Dashboard() {
               <div className="card p-5 lg:col-span-2">
                 <div className="mb-3 flex items-center justify-between">
                   <h2 className="font-bold">Leave awaiting approval</h2>
-                  <Link to="/leaves" className="text-sm font-semibold text-leaf-700 hover:underline">Open approvals</Link>
+                  <Link to="/leaves?tab=approvals" className="text-sm font-semibold text-leaf-700 hover:underline">Open approvals</Link>
                 </div>
                 {d.pendingList.length === 0 ? <p className="text-sm text-gray-500">All caught up.</p> : (
                   <ul className="divide-y divide-gray-100">

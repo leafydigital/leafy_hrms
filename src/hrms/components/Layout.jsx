@@ -140,10 +140,10 @@ export default function Layout({ children }) {
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-lime-500 text-sm font-bold text-ink">
             {initials(me.full_name)}
           </div>
-          <div className="min-w-0 flex-1">
+          <NavLink to="/profile" onClick={() => setOpen(false)} className="min-w-0 flex-1 rounded-md hover:text-white" title="My Profile">
             <div className="truncate text-sm font-semibold text-white">{me.full_name}</div>
-            <div className="truncate text-xs text-gray-400">{me.designation?.name ?? ROLES[role].label}</div>
-          </div>
+            <div className="truncate text-xs text-gray-400">{me.designation?.name ?? ROLES[role]?.label}</div>
+          </NavLink>
           <button onClick={() => setPwOpen(true)} className="rounded-md p-2 text-gray-400 hover:bg-ink-700 hover:text-white" aria-label="Change password" title="Change password">
             <KeyRound size={18} />
           </button>

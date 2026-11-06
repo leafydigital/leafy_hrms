@@ -42,7 +42,7 @@ export default function DayPicker({ value = [], onChange, allowed = () => true, 
         <button type="button" className="rounded-md p-1.5 hover:bg-gray-100" onClick={() => setCursor((c) => new Date(c.getFullYear(), c.getMonth() + 1, 1))} aria-label="Next month"><ChevronRight size={18} /></button>
       </div>
       <div className="grid grid-cols-7 gap-1 text-center">
-        {WEEK.map((w) => <div key={w} className={`py-1 text-[11px] font-semibold uppercase ${w === 'Sun' ? 'text-red-400' : 'text-gray-500'}`}>{w}</div>)}
+        {WEEK.map((w) => <div key={w} className={`py-1 text-[11px] font-semibold uppercase ${w === 'Sun' || w === 'Sat' ? 'text-red-400' : 'text-gray-500'}`}>{w}</div>)}
         {cells.map((d, i) => {
           if (!d) return <div key={`x${i}`} />
           const k = iso(d)
@@ -50,7 +50,7 @@ export default function DayPicker({ value = [], onChange, allowed = () => true, 
           const on = selected.has(k)
           return (
             <label key={k} className={`flex flex-col items-center gap-0.5 rounded-lg py-1.5 text-sm transition ${!ok ? 'cursor-not-allowed text-gray-300' : on ? 'cursor-pointer bg-lime-100 font-bold text-leaf-800' : 'cursor-pointer hover:bg-gray-50'} ${marks.has(k) ? 'ring-1 ring-sky-300' : ''}`}>
-              <span className={d.getDay() === 0 && ok && !on ? 'text-red-500' : ''}>{d.getDate()}</span>
+              <span className={(d.getDay() === 0 || d.getDay() === 6) && ok && !on ? 'text-red-500' : ''}>{d.getDate()}</span>
               <input type="checkbox" className="h-3.5 w-3.5 accent-leaf-600" checked={on} disabled={!ok} onChange={() => toggle(d)} aria-label={k} />
             </label>
           )

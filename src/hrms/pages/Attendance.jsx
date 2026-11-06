@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { AlertTriangle, CalendarPlus, CheckCircle2, Coffee, Home, LogIn, LogOut, MapPin, Play, Trash2, Wifi, WifiOff, XCircle } from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { AlertTriangle, Building2, CalendarHeart, CheckCircle2, Coffee, Home, LogIn, LogOut, MapPin, Play, Search, Wifi, WifiOff, XCircle } from 'lucide-react'
 import { api, db } from '../lib/db'
 import { useAuth } from '../lib/useAuth'
 import { useRefs } from '../lib/refs'
 import { useRealtime } from '../lib/realtime'
 import { can } from '../lib/permissions'
-import { getLocation, mapLink } from '../lib/geo'
-import { currentMonth, daysInMonth, fmtDate, fmtTime, label, monthEnd, monthStart, timeInput, toTimestamp, todayIST } from '../lib/format'
+import { getLocation } from '../lib/geo'
+import { fmtDate, fmtTime, label, timeInput, toTimestamp, todayIST } from '../lib/format'
 import { Badge, Empty, FieldError, FormGrid, Loading, Modal, PageHeader, StatCard, StatusBadge, Tabs, useToast } from '../components/ui'
+import EmployeeCalendar from '../components/EmployeeCalendar'
+import TeamMonthGrid from '../components/TeamMonthGrid'
+import { APPROVAL_TONE, TimePair, Where } from '../components/AttendanceBits'
 
 const STATUS_OPTIONS = ['present', 'wfh', 'half_day', 'absent', 'leave', 'holiday'].map((s) => ({ value: s, label: label(s) }))
 const toMin = (hhmm) => { const [h, m] = String(hhmm || '').split(':').map(Number); return h * 60 + m }
@@ -18,33 +21,6 @@ const REASON_TEXT = {
   time_edited: (r) => `Typed time is more than ${r.time_edit_tolerance_min} min away from now`,
   other_network: () => 'Not on the office network',
 }
-const APPROVAL_TONE = { pending: 'amber', approved: 'green', rejected: 'red' }
-
-/** Typed time, with the actual (system) time underneath when they differ. */
-function TimePair({ typed, system }) {
-  if (!typed && !system) return <span className="text-gray-400">—</span>
-  const differs = system && typed && Math.abs(new Date(typed) - new Date(system)) >= 60000
-  return (
-    <div>
-      <div className="font-medium">{fmtTime(typed ?? system)}</div>
-      {differs && <div className="text-[11px] text-gray-500">actual {fmtTime(system)}</div>}
-    </div>
-  )
-}
-
-function Where({ lat, lng, accuracy, office, ip }) {
-  const link = mapLink(lat, lng)
-  return (
-    <div className="space-y-0.5 text-xs">
-      {office != null && (office
-        ? <span className="inline-flex items-center gap-1 text-leaf-700"><Wifi size={12} /> Office network</span>
-        : <span className="inline-flex items-center gap-1 text-amber-700"><WifiOff size={12} /> Other network</span>)}
-      {ip && <div className="text-gray-400">{ip}</div>}
-      {link && <a href={link} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-leaf-700 hover:underline"><MapPin size={12} /> Map{accuracy ? ` ±${Math.round(accuracy)}m` : ''}</a>}
-    </div>
-  )
-}
-
 function ShiftCard({ onChanged }) {
   const toast = useToast()
   const [info, setInfo] = useState(null)
@@ -77,14 +53,26 @@ function ShiftCard({ onChanged }) {
   const checkedOut = !!row?.check_out
   const wfh = info.wfh_today || row?.work_mode === 'wfh'
   const nowMin = toMin(nowHHMM())
+  const exempt = !!info.approval_exempt
   const edited = Math.abs(toMin(time) - nowMin) > rules.time_edit_tolerance_min
-  const needs = !checkedIn ? [
+  const needs = !checkedIn && !exempt ? [
     nowMin > toMin(rules.late_after) && 'late',
     edited && 'time_edited',
     !info.wfh_today && !info.office_network && 'other_network',
   ].filter(Boolean) : []
   const wfhBlocked = wfh && !info.wfh_window_open
-  const reasonRequired = checkedIn ? edited : needs.length > 0
+  const reasonRequired = exempt ? false : checkedIn ? edited : needs.length > 0
+
+  const switchWfh = async (mode) => {
+    if (mode === 'office' && !window.confirm('Work from the office today instead of WFH? Office check-in rules (office network) will apply.')) return
+    setBusy(true)
+    const { error } = await api('/api/attendance/wfh-switch', { mode })
+    setBusy(false)
+    if (error) return toast.error(error.message)
+    toast.success(mode === 'office' ? 'Today is set to office work' : 'Today is set back to work from home')
+    await load()
+    onChanged?.()
+  }
 
   const submit = async (kind) => {
     const errs = {}
@@ -135,11 +123,25 @@ function ShiftCard({ onChanged }) {
           : info.office_network ? <Badge tone="green"><Wifi size={12} className="mr-1" />On office network</Badge>
             : <Badge tone="amber"><WifiOff size={12} className="mr-1" />Not on office network</Badge>}
         {wfh && <span className="text-gray-500">WFH hours {rules.wfh_start}–{rules.wfh_end}</span>}
+        {exempt && <Badge tone="gray">No approval needed for your role</Badge>}
         {row?.approval_status && row.approval_status !== 'not_required' && <Badge tone={APPROVAL_TONE[row.approval_status]}>Check-in {row.approval_status === 'pending' ? 'awaiting HR approval' : row.approval_status}</Badge>}
       </div>
 
       <div className="p-5">
         {info.approved_leave && !checkedIn && <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">You are on approved {info.approved_leave.name}{info.approved_leave.half_day ? ' (half day)' : ''} today.</div>}
+        {info.wfh_approved_today && !checkedOut && (info.wfh_today ? (
+          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+            <Home size={16} className="shrink-0" />
+            <span className="flex-1">Work from home is approved for today. Came to the office instead? Switch today to office yourself — no need to wait for HR.</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => switchWfh('office')} disabled={busy}><Building2 size={14} /> I'm at the office today</button>
+          </div>
+        ) : !checkedIn && (
+          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
+            <Building2 size={16} className="shrink-0" />
+            <span className="flex-1">You switched today from work from home to office.</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => switchWfh('wfh')} disabled={busy}><Home size={14} /> Switch back to WFH</button>
+          </div>
+        ))}
         {wfhBlocked && !checkedOut && <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800">Work-from-home check-in and check-out are open {rules.wfh_start}–{rules.wfh_end} IST. Please rest outside those hours.</div>}
 
         {checkedIn && (
@@ -318,6 +320,23 @@ function Approvals() {
   )
 }
 
+/** Name, code, designation, department or access role contains the search text. */
+function matches(e, refs, q) {
+  const n = q.trim().toLowerCase()
+  if (!n) return true
+  return [e.full_name, e.emp_code, refs.desigName(e.designation_id), refs.deptName(e.department_id), e.role, label(e.role ?? '')]
+    .some((v) => String(v ?? '').toLowerCase().includes(n))
+}
+
+function SearchBox({ value, onChange, placeholder = 'Search name, employee code, role or designation…' }) {
+  return (
+    <div className="relative mb-4 max-w-md">
+      <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+      <input className="input pl-9" placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} />
+    </div>
+  )
+}
+
 export default function Attendance() {
   const { me, role } = useAuth()
   const refs = useRefs()
@@ -326,64 +345,57 @@ export default function Attendance() {
   const [params, setParams] = useSearchParams()
   const canManage = can(role, 'attendance', 'manage')
   const canApprove = can(role, 'attendance', 'approve')
-  const canManageHolidays = ['admin', 'hr'].includes(role)
-  const canViewTeam = canManage || refs.activeStaff.some((e) => e.reporting_to === me?.id)
+  const canViewAll = can(role, 'attendance', 'viewAll')
+  const canViewTeam = canViewAll || refs.activeStaff.some((e) => e.reporting_to === me?.id)
   const today = todayIST()
 
   const tab = params.get('tab') || 'mine'
   const setTab = (t) => setParams(t === 'mine' ? {} : { tab: t }, { replace: true })
-  const [month, setMonth] = useState(currentMonth())
-  const [mine, setMine] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
+  const bump = () => setReloadKey((k) => k + 1)
 
-  // team view
+  // team view (one day)
   const [date, setDate] = useState(today)
   const [team, setTeam] = useState(null)
   const [onLeave, setOnLeave] = useState([])
-  const [edit, setEdit] = useState(null)
-  const [holidays, setHolidays] = useState([])
-  const [holidayDate, setHolidayDate] = useState(today)
-  const [holidayName, setHolidayName] = useState('')
   const [compOffTeam, setCompOffTeam] = useState([])
+  const [teamQuery, setTeamQuery] = useState('')
+  // employee calendar (month grid)
+  const [calQuery, setCalQuery] = useState('')
+  const [calEmp, setCalEmp] = useState(null)
+  // HR / Admin mark or edit (any employee, any date)
+  const [edit, setEdit] = useState(null)
 
-  const loadMine = useCallback(async () => {
-    const { data, error } = await db
-      .from('attendance').select('*').eq('employee_id', me.id)
-      .gte('date', monthStart(month)).lte('date', monthEnd(month)).order('date', { ascending: false })
-    if (error) toast.error(error.message)
-    setMine(data ?? [])
-  }, [month, me.id])
-  useEffect(() => { loadMine() }, [loadMine])
+  const staff = useMemo(
+    () => (canViewAll ? refs.activeStaff : refs.activeStaff.filter((e) => e.reporting_to === me.id)),
+    [refs.activeStaff, canViewAll, me.id],
+  )
 
   const loadTeam = useCallback(async () => {
     if (!canViewTeam) return
-    const [a, l, h, c] = await Promise.all([
+    const [a, l, c] = await Promise.all([
       db.from('attendance').select('*').eq('date', date),
       db.from('leaves').select('employee_id').eq('status', 'approved').lte('start_date', date).gte('end_date', date),
-      db.from('company_holidays').select('*').order('holiday_date'),
       db.from('comp_off_ledger').select('*').order('earned_on', { ascending: false }),
     ])
     setTeam(a.data ?? [])
     setOnLeave((l.data ?? []).map((x) => x.employee_id))
-    setHolidays(h.data ?? [])
     setCompOffTeam(c.data ?? [])
   }, [date, canViewTeam])
   useEffect(() => { if (tab === 'team') loadTeam() }, [tab, loadTeam])
-  useEffect(() => subscribe((evt) => { if (evt === 'shift' && tab === 'team') loadTeam() }), [subscribe, tab, loadTeam])
-  useEffect(() => { if (me) db.from('company_holidays').select('*').order('holiday_date').then(({ data }) => setHolidays(data ?? [])) }, [me?.id])
+  useEffect(() => subscribe((evt) => {
+    if (evt !== 'shift') return
+    if (tab === 'team') loadTeam()
+    if (tab === 'calendar' || tab === 'mine') bump()
+  }), [subscribe, tab, loadTeam])
 
-  const summary = useMemo(() => {
-    const c = { present: 0, wfh: 0, half_day: 0, absent: 0, leave: 0 }
-    for (const r of mine ?? []) if (r.status in c) c[r.status]++
-    return c
-  }, [mine])
-
-  // ---- team editing ----
   const teamRows = useMemo(() => {
     const byEmp = Object.fromEntries((team ?? []).map((r) => [r.employee_id, r]))
-    const staff = canManage ? refs.activeStaff : refs.activeStaff.filter((e) => e.reporting_to === me.id)
     return staff.map((e) => ({ emp: e, rec: byEmp[e.id], leave: onLeave.includes(e.id) }))
-  }, [team, onLeave, refs.activeStaff, canManage, me.id])
+  }, [team, onLeave, staff])
+  const shownTeam = useMemo(() => teamRows.filter((r) => matches(r.emp, refs, teamQuery)), [teamRows, teamQuery, refs])
+  const shownCal = useMemo(() => staff.filter((e) => matches(e, refs, calQuery)), [staff, calQuery, refs])
 
   const counts = useMemo(() => {
     let present = 0, leave = 0, unmarked = 0
@@ -395,36 +407,21 @@ export default function Attendance() {
     return { present, leave, unmarked }
   }, [teamRows])
 
-  const openEdit = ({ emp, rec, leave }) =>
+  const openEdit = ({ employee, date: d, rec, leave }) =>
     setEdit({
-      employee: emp, id: rec?.id,
-      status: rec?.status ?? (leave ? 'leave' : 'present'),
+      employee, date: d, id: rec?.id,
+      status: rec?.status ?? (leave?.status === 'approved' || leave === true ? 'leave' : 'present'), half_day_session: rec?.half_day_session ?? '',
       check_in: timeInput(rec?.check_in), check_out: timeInput(rec?.check_out), note: rec?.note ?? '',
     })
-
-  const addHoliday = async (e) => {
-    e.preventDefault()
-    if (!holidayDate || !holidayName.trim()) return toast.error('Holiday date and name are required.')
-    const { error } = await db.from('company_holidays').insert({ holiday_date: holidayDate, name: holidayName.trim() })
-    if (error) return toast.error(error.message)
-    toast.success('Company holiday added')
-    setHolidayName('')
-    await loadTeam()
-  }
-  const removeHoliday = async (h) => {
-    if (!window.confirm(`Remove company holiday ${h.name}?`)) return
-    const { error } = await db.from('company_holidays').delete().eq('id', h.id)
-    if (error) return toast.error(error.message)
-    await loadTeam()
-  }
 
   const saveEdit = async (e) => {
     e.preventDefault()
     setBusy(true)
     const { error } = await db.from('attendance').upsert(
       {
-        employee_id: edit.employee.id, date, status: edit.status,
-        check_in: toTimestamp(date, edit.check_in), check_out: toTimestamp(date, edit.check_out), note: edit.note || null,
+        employee_id: edit.employee.id, date: edit.date, status: edit.status,
+        check_in: toTimestamp(edit.date, edit.check_in), check_out: toTimestamp(edit.date, edit.check_out), note: edit.note || null,
+        half_day_session: edit.status === 'half_day' ? edit.half_day_session || null : null,
       },
       { onConflict: 'employee_id,date' },
     )
@@ -433,67 +430,41 @@ export default function Attendance() {
     toast.success('Attendance saved')
     setEdit(null)
     loadTeam()
-    if (edit.employee.id === me.id) loadMine()
+    bump()
   }
 
   const tabs = [{ value: 'mine', label: 'My attendance' }]
-  if (canViewTeam) tabs.push({ value: 'team', label: 'Team attendance' })
+  if (canViewTeam) tabs.push({ value: 'team', label: 'Team attendance' }, { value: 'calendar', label: 'Employee calendar' })
   if (canApprove) tabs.push({ value: 'approvals', label: 'Approvals' })
+  const holidayToday = refs.holiday(today)
 
   return (
     <>
-      <PageHeader title="Attendance" subtitle="Check in when you start and check out when you finish." />
+      <PageHeader title="Attendance" subtitle="Check in when you start and check out when you finish. Saturday and Sunday are weekly offs.">
+        <Link to="/holidays" className="btn btn-ghost"><CalendarHeart size={15} /> Holiday calendar</Link>
+      </PageHeader>
       {tabs.length > 1 && <div className="max-w-full overflow-x-auto"><Tabs value={tab} onChange={setTab} tabs={tabs} /></div>}
 
-      {tab === 'approvals' && canApprove ? <Approvals /> : tab === 'mine' || !canViewTeam ? (
+      {tab === 'approvals' && canApprove ? <Approvals /> : tab === 'calendar' && canViewTeam ? (
+        <div className="card p-4">
+          <SearchBox value={calQuery} onChange={setCalQuery} />
+          <TeamMonthGrid employees={shownCal} reloadKey={reloadKey} onOpenEmployee={setCalEmp} onEdit={canManage ? openEdit : undefined} />
+        </div>
+      ) : tab === 'mine' || !canViewTeam ? (
         <>
-          {holidays.some((h) => h.holiday_date === today) && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">Company holiday: {holidays.find((h) => h.holiday_date === today)?.name}. If you work and complete check-in/check-out, comp-off is credited automatically after verification.</div>}
-          <ShiftCard onChanged={() => { if (month !== currentMonth()) setMonth(currentMonth()); else loadMine() }} />
-
-          <div className="mb-4 flex items-center gap-3">
-            <input type="month" className="input w-auto" value={month} max={currentMonth()} onChange={(e) => e.target.value && setMonth(e.target.value)} />
-            <span className="text-sm text-gray-500">{daysInMonth(month)} days in month</span>
-          </div>
-          <div className="mb-4 grid grid-cols-2 gap-4 lg:grid-cols-5">
-            <StatCard label="Present" value={summary.present} />
-            <StatCard label="WFH" value={summary.wfh} />
-            <StatCard label="Half day" value={summary.half_day} />
-            <StatCard label="Absent" value={summary.absent} />
-            <StatCard label="Leave" value={summary.leave} />
-          </div>
-
-          <div className="card overflow-hidden">
-            {mine === null ? <Loading /> : mine.length === 0 ? <Empty>No attendance recorded this month.</Empty> : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[720px]">
-                  <thead className="bg-gray-50"><tr><th className="th">Date</th><th className="th">Status</th><th className="th">In</th><th className="th">Out</th><th className="th">Where</th><th className="th">Approval / note</th></tr></thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {mine.map((r) => (
-                      <tr key={r.id} className="align-top">
-                        <td className="td whitespace-nowrap">{fmtDate(r.date)}</td>
-                        <td className="td"><StatusBadge status={r.status} /></td>
-                        <td className="td"><TimePair typed={r.check_in} system={r.check_in_system} /></td>
-                        <td className="td"><TimePair typed={r.check_out} system={r.check_out_system} /></td>
-                        <td className="td"><Where lat={r.check_in_lat} lng={r.check_in_lng} accuracy={r.check_in_accuracy} office={r.check_in_office_network} /></td>
-                        <td className="td text-xs text-gray-600">
-                          {r.approval_status && r.approval_status !== 'not_required' && <Badge tone={APPROVAL_TONE[r.approval_status]}>{label(r.approval_status)}</Badge>}
-                          {r.review_note && <div className="mt-1">HR: {r.review_note}</div>}
-                          {r.check_in_reason && <div className="mt-1">You: {r.check_in_reason}</div>}
-                          {r.note && <div className="mt-1">{r.note}</div>}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+          {holidayToday && <div className="mb-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">Today is a holiday: <b>{holidayToday.name}</b>. If you work and complete check-in and check-out, comp-off is credited automatically.</div>}
+          <ShiftCard onChanged={bump} />
+          <div className="card p-4">
+            <h2 className="mb-3 font-bold">My month</h2>
+            <EmployeeCalendar employee={me} reloadKey={reloadKey} />
           </div>
         </>
       ) : (
         <>
-          {canManageHolidays && <div className="card mb-4 p-4"><h3 className="mb-3 font-semibold">Company off days</h3><form onSubmit={addHoliday} className="flex flex-wrap gap-2"><input type="date" className="input w-auto" value={holidayDate} onChange={(e) => setHolidayDate(e.target.value)} required /><input className="input min-w-[180px] flex-1" placeholder="Holiday name" value={holidayName} onChange={(e) => setHolidayName(e.target.value)} required /><button className="btn btn-primary" type="submit"><CalendarPlus size={15} /> Add holiday</button></form><div className="mt-3 space-y-2">{holidays.map((h) => <div key={h.id} className="flex items-center justify-between rounded-md bg-gray-50 px-3 py-2 text-sm"><span>{fmtDate(h.holiday_date)} · {h.name}</span><button className="btn btn-ghost btn-sm text-red-600" onClick={() => removeHoliday(h)}><Trash2 size={14} /> Remove</button></div>)}</div></div>}
           <div className="mb-4 flex flex-wrap items-center gap-3">
             <input type="date" className="input w-auto" value={date} max={today} onChange={(e) => e.target.value && setDate(e.target.value)} />
+            {refs.holiday(date) && <Badge tone="blue">Holiday · {refs.holiday(date).name}</Badge>}
+            {[0, 6].includes(new Date(`${date}T00:00:00Z`).getUTCDay()) && <Badge tone="gray">Weekend</Badge>}
           </div>
           <div className="mb-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
             <StatCard label="Present / WFH" value={counts.present} />
@@ -501,15 +472,19 @@ export default function Attendance() {
             <StatCard label="Not marked" value={counts.unmarked} />
             <StatCard label="Comp-off earned" value={compOffTeam.reduce((sum, x) => sum + Number(x.days || 0), 0)} hint="Team total, where visible" />
           </div>
+          <SearchBox value={teamQuery} onChange={setTeamQuery} />
           <div className="card overflow-hidden">
-            {team === null ? <Loading /> : (
+            {team === null ? <Loading /> : shownTeam.length === 0 ? <Empty>No employees match “{teamQuery}”.</Empty> : (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[820px]">
                   <thead className="bg-gray-50"><tr><th className="th">Employee</th><th className="th">Status</th><th className="th">In</th><th className="th">Out</th><th className="th">Check-in place</th><th className="th">Check-out place</th><th className="th" /></tr></thead>
                   <tbody className="divide-y divide-gray-100">
-                    {teamRows.map((r) => (
+                    {shownTeam.map((r) => (
                       <tr key={r.emp.id} className="align-top">
-                        <td className="td"><div className="font-semibold">{r.emp.full_name}</div><div className="text-xs text-gray-500">{refs.desigName(r.emp.designation_id)}</div></td>
+                        <td className="td">
+                          <button className="text-left font-semibold hover:text-leaf-700 hover:underline" onClick={() => setCalEmp(r.emp)} title="Open month calendar">{r.emp.full_name}</button>
+                          <div className="text-xs text-gray-500">{r.emp.emp_code} · {refs.desigName(r.emp.designation_id)}</div>
+                        </td>
                         <td className="td">
                           {r.rec ? <StatusBadge status={r.rec.status} /> : r.leave ? <StatusBadge status="leave" /> : <span className="text-xs text-gray-400">Not marked</span>}
                           {r.rec?.approval_status === 'pending' && <div className="mt-1"><Badge tone="amber">Awaiting approval</Badge></div>}
@@ -518,7 +493,7 @@ export default function Attendance() {
                         <td className="td"><TimePair typed={r.rec?.check_out} system={r.rec?.check_out_system} /></td>
                         <td className="td"><Where lat={r.rec?.check_in_lat} lng={r.rec?.check_in_lng} accuracy={r.rec?.check_in_accuracy} office={r.rec?.check_in_office_network} /></td>
                         <td className="td"><Where lat={r.rec?.check_out_lat} lng={r.rec?.check_out_lng} accuracy={r.rec?.check_out_accuracy} office={r.rec?.check_out_office_network} /></td>
-                        <td className="td text-right">{canManage && <button className="btn btn-ghost btn-sm" onClick={() => openEdit(r)}>{r.rec ? 'Edit' : 'Mark'}</button>}</td>
+                        <td className="td text-right">{canManage && <button className="btn btn-ghost btn-sm" onClick={() => openEdit({ employee: r.emp, date, rec: r.rec, leave: r.leave })}>{r.rec ? 'Edit' : 'Mark'}</button>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -529,10 +504,14 @@ export default function Attendance() {
         </>
       )}
 
+      <Modal open={!!calEmp} onClose={() => setCalEmp(null)} size="xl" title={calEmp ? `${calEmp.full_name} · ${calEmp.emp_code}` : ''}>
+        {calEmp && <EmployeeCalendar key={calEmp.id} employee={calEmp} reloadKey={reloadKey} showIp onEdit={canManage ? (x) => { openEdit(x) } : undefined} />}
+      </Modal>
+
       <Modal
         open={!!edit}
         onClose={() => setEdit(null)}
-        title={edit ? `${edit.employee.full_name} · ${fmtDate(date)}` : ''}
+        title={edit ? `${edit.employee.full_name} · ${fmtDate(edit.date)}` : ''}
         footer={
           <>
             <button className="btn btn-ghost" onClick={() => setEdit(null)}>Cancel</button>
@@ -542,12 +521,15 @@ export default function Attendance() {
       >
         {edit && (
           <form id="att-form" onSubmit={saveEdit}>
+            {refs.holiday(edit.date) && <p className="mb-3 rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-900">Holiday: {refs.holiday(edit.date).name}. Marking Present with check-in and check-out credits comp-off.</p>}
             <FormGrid
               values={edit}
               setValues={setEdit}
               refs={refs}
               fields={[
                 { name: 'status', label: 'Status', type: 'select', required: true, options: STATUS_OPTIONS, full: true },
+                { name: 'half_day_session', label: 'Half-day leave taken in', type: 'select', full: true, hidden: (v) => v.status !== 'half_day',
+                  options: [{ value: 'morning', label: 'Morning (worked afternoon)' }, { value: 'afternoon', label: 'Afternoon (worked morning)' }] },
                 { name: 'check_in', label: 'Check in', type: 'time' },
                 { name: 'check_out', label: 'Check out', type: 'time' },
                 { name: 'note', label: 'Note', type: 'textarea', rows: 2 },

@@ -10,17 +10,18 @@ export const useRefs = () => useContext(RefsCtx)
 export function RefsProvider({ children }) {
   const { me } = useAuth()
   const [state, setState] = useState({
-    departments: [], designations: [], leaveTypes: [], directory: [], clients: [], projects: [],
+    departments: [], designations: [], leaveTypes: [], directory: [], clients: [], projects: [], holidays: [],
   })
 
   const reload = useCallback(async () => {
-    const [d, g, l, e, c, p] = await Promise.all([
+    const [d, g, l, e, c, p, h] = await Promise.all([
       db.from('departments').select('*').order('name'),
       db.from('designations').select('*').order('sort_order'),
       db.from('leave_types').select('*').order('name'),
       db.from('employee_directory').select('*').order('full_name'),
       db.from('clients').select('id,name,company').order('name'),
       db.from('projects').select('id,name,status').order('name'),
+      db.from('company_holidays').select('*').order('holiday_date'),
     ])
     setState({
       departments: d.data ?? [],
@@ -29,6 +30,7 @@ export function RefsProvider({ children }) {
       directory: e.data ?? [],
       clients: c.data ?? [],
       projects: p.data ?? [],
+      holidays: h.data ?? [],
     })
   }, [])
 
@@ -52,6 +54,8 @@ export function RefsProvider({ children }) {
       leaveType: (id) => lt[id],
       clientName: (id) => cl[id]?.name ?? '—',
       projectName: (id) => pr[id]?.name ?? '—',
+      holidayDates: new Set(state.holidays.map((x) => x.holiday_date)),
+      holiday: (date) => state.holidays.find((x) => x.holiday_date === date),
     }
   }, [state, reload])
 

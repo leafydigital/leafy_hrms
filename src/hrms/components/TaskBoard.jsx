@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Pencil, Plus, Trash2 } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
+import { MessageSquareText, Pencil, Plus, Trash2 } from 'lucide-react'
+import TaskDetail from './TaskDetail'
 import { db } from '../lib/db'
 import { useAuth } from '../lib/useAuth'
 import { useRefs } from '../lib/refs'
@@ -25,6 +27,13 @@ export default function TaskBoard({ projectId }) {
   const [project, setProject] = useState('')
   const [edit, setEdit] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [openId, setOpenId] = useState(null)
+  const [params, setParams] = useSearchParams()
+  // /tasks?task=<id> (e.g. from a "note added" notification) opens that task.
+  useEffect(() => {
+    const id = params.get('task')
+    if (id) { setOpenId(id); setParams({}, { replace: true }) }
+  }, [params]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = useCallback(async () => {
     let q = db.from('tasks').select('*').order('due_date', { ascending: true, nullsFirst: false })
@@ -127,7 +136,7 @@ export default function TaskBoard({ projectId }) {
                     return (
                       <div key={t.id} className="card p-3">
                         <div className="flex items-start justify-between gap-2">
-                          <div className="text-sm font-semibold leading-snug">{t.title}</div>
+                          <button className="text-left text-sm font-semibold leading-snug hover:text-leaf-700 hover:underline" onClick={() => setOpenId(t.id)}>{t.title}</button>
                           {canManage && (
                             <div className="flex shrink-0">
                               <button className="rounded p-1 text-gray-400 hover:text-ink" onClick={() => openEdit(t)} aria-label="Edit"><Pencil size={13} /></button>
@@ -143,6 +152,7 @@ export default function TaskBoard({ projectId }) {
                         </div>
                         <div className="mt-2.5 flex items-center justify-between gap-2">
                           <span className="truncate text-xs text-gray-500">{t.assignee_id ? refs.empName(t.assignee_id) : 'Unassigned'}</span>
+                          <button className="rounded p-1 text-gray-400 hover:text-leaf-700" onClick={() => setOpenId(t.id)} title="Notes & activity" aria-label="Notes and activity"><MessageSquareText size={14} /></button>
                           {canStatus && (
                             <select className="rounded-md border border-gray-200 bg-white px-1.5 py-1 text-xs" value={t.status} onChange={(e) => setStatus(t, e.target.value)} aria-label="Change status">
                               {STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
@@ -158,6 +168,12 @@ export default function TaskBoard({ projectId }) {
           })}
         </div>
       )}
+
+      <TaskDetail
+        task={(tasks ?? []).find((t) => t.id === openId) ?? null}
+        onClose={() => setOpenId(null)}
+        onChanged={(t) => setTasks((all) => all.map((x) => (x.id === t.id ? { ...x, status: t.status } : x)))}
+      />
 
       <Modal
         open={!!edit}

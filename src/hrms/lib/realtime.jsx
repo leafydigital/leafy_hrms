@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, apiBase, getAccessToken } from './db'
+import { api, apiBase, getAccessToken, signOutWithNotice } from './db'
 import { useAuth } from './useAuth'
 import { notificationPermission, playChime, registerServiceWorker, requestNotificationPermission, showSystemNotification } from './notify'
 
@@ -82,6 +82,8 @@ export function RealtimeProvider({ children }) {
   // Handle one incoming event
   const handle = useCallback(({ event, data }) => {
     listeners.current.forEach((fn) => fn(event, data))
+    if (event === 'channels') { refreshChannels(); return }
+    if (event === 'signout') { signOutWithNotice('Leafy HRMS is available from 8:00 AM to 10:00 PM. You have been signed out — please rest and sign in again tomorrow.'); return }
     if (event === 'message') {
       const mine = data.sender_id === me?.id
       const known = channelsRef.current.find((c) => c.id === data.channel_id)
@@ -93,11 +95,14 @@ export function RealtimeProvider({ children }) {
       if (mine || viewing) return
       const slug = known?.slug ?? (data.channel_kind === 'dm' ? 'dm' : data.channel_name)
       if (mutedRef.current.includes(slug)) return
-      const where = data.channel_kind === 'dm' ? 'Direct message' : `#${data.channel_name}`
+      const where = data.channel_kind === 'dm' ? 'Direct message' : data.channel_kind === 'group' ? data.channel_name : `#${data.channel_name}`
       const link = `/chat?c=${data.channel_id}`
+      const files = data.attachments ?? []
+      const text = data.kind === 'system' ? `${data.sender_name ?? ''} ${data.body}`.trim()
+        : data.body || (files.length ? `📎 ${files.length === 1 ? files[0].file_name : `${files.length} files`}` : '')
       playChime('message')
-      pushPopup({ title: data.sender_name || 'Leafy HRMS', subtitle: where, body: data.body, link })
-      showSystemNotification({ title: `${data.sender_name || 'Leafy HRMS'} · ${where}`, body: data.body, link, tag: data.channel_id })
+      pushPopup({ title: data.sender_name || 'Leafy HRMS', subtitle: where, body: text, link })
+      showSystemNotification({ title: `${data.sender_name || 'Leafy HRMS'} · ${where}`, body: text, link, tag: data.channel_id })
     } else if (event === 'notice') {
       playChime('notice')
       pushPopup({ title: data.title, body: data.body, link: data.link, notice: true })
@@ -118,7 +123,12 @@ export function RealtimeProvider({ children }) {
         controller = new AbortController()
         try {
           const res = await fetch(`${apiBase}/api/chat/stream`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal, cache: 'no-store' })
-          if (res.status === 401 || res.status === 403) return
+          if (res.status === 401) return
+          if (res.status === 403) {
+            const j = await res.json().catch(() => ({}))
+            if (j.code === 'outside_hours') signOutWithNotice(j.error)
+            return
+          }
           if (!res.ok || !res.body) throw new Error(`stream ${res.status}`)
           setConnected(true)
           retry = 1000

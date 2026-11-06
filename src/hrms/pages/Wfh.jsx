@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { CheckCircle2, Home, Plus, XCircle } from 'lucide-react'
 import { api } from '../lib/db'
 import { useRealtime } from '../lib/realtime'
+import { useRefs } from '../lib/refs'
 import { fmtDate, todayIST } from '../lib/format'
 import DayPicker from '../components/DayPicker'
 import { Badge, Empty, FieldError, Loading, Modal, PageHeader, StatusBadge, Tabs, useToast } from '../components/ui'
@@ -48,6 +49,7 @@ function RequestTable({ rows, review, onReview, onCancel }) {
 
 export default function Wfh() {
   const toast = useToast()
+  const refs = useRefs()
   const { subscribe } = useRealtime()
   const [params, setParams] = useSearchParams()
   const tab = params.get('tab') || 'mine'
@@ -73,6 +75,10 @@ export default function Wfh() {
     setPeople(b.data?.team ?? [])
   }, [])
   useEffect(() => { load() }, [load])
+  // Dashboard "Request WFH" (/wfh?request=1) opens the request form straight away.
+  useEffect(() => {
+    if (params.get('request')) { setErrors({}); setForm({ start_date: today, end_date: today, reason: '' }); setParams({}, { replace: true }) }
+  }, [params]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => subscribe((evt, data) => { if (evt === 'notice' && /WFH|Work-from-home/i.test(data.title)) load() }), [subscribe, load])
 
   const pending = useMemo(() => (team ?? []).filter((r) => r.status === 'pending').length, [team])
@@ -131,7 +137,7 @@ export default function Wfh() {
 
   return (
     <>
-      <PageHeader title="Work from home" subtitle="Ask your reporting person, HR or Admin — any one of them can approve. WFH check-in is open 09:00–22:00 IST.">
+      <PageHeader title="Work from home" subtitle="Ask your reporting person, HR or Admin — any one of them can approve. WFH check-in is open 08:00–22:00 IST.">
         <button className="btn btn-primary" onClick={() => { setErrors({}); setForm({ start_date: today, end_date: today, reason: '' }) }}><Plus size={16} /> Request WFH</button>
         {canReview && <button className="btn btn-ghost" onClick={() => { setErrors({}); setAssign({ employee_id: '', dates: [], note: '' }) }}><Home size={16} /> Mark employee as WFH</button>}
       </PageHeader>
@@ -141,7 +147,7 @@ export default function Wfh() {
       )}
       <div className="card overflow-hidden">
         {tab === 'review' && canReview
-          ? <RequestTable rows={team} review onReview={(r) => setReview({ row: r, dates: datesBetween(r.start_date, r.end_date).filter((d) => new Date(`${d}T00:00:00`).getDay() !== 0), note: '' })} onCancel={cancel} />
+          ? <RequestTable rows={team} review onReview={(r) => setReview({ row: r, dates: datesBetween(r.start_date, r.end_date).filter((d) => ![0, 6].includes(new Date(`${d}T00:00:00`).getDay()) && !refs.holidayDates.has(d)), note: '' })} onCancel={cancel} />
           : <RequestTable rows={mine} onCancel={cancel} />}
       </div>
 
@@ -187,7 +193,7 @@ export default function Wfh() {
                 <div className="text-gray-600">{review.row.days} day(s) requested</div>
                 <div className="mt-2 text-gray-700">“{review.row.reason}”</div>
               </div>
-              <p className="text-xs text-gray-500">Tick the days you approve. Sundays start unticked. The employee gets an email with the approved days.</p>
+              <p className="text-xs text-gray-500">Tick the days you approve. Saturdays, Sundays and holidays start unticked. The employee gets an email with the approved days.</p>
               <div>
                 <label className="label" htmlFor="wfh-note">Note (optional)</label>
                 <textarea id="wfh-note" rows={3} className="input" value={review.note} onChange={(e) => setReview((r) => ({ ...r, note: e.target.value }))} />

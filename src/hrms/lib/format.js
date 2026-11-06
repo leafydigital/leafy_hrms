@@ -35,15 +35,8 @@ export const daysInMonth = (ym) => {
 }
 export const monthEnd = (ym) => `${ym}-${String(daysInMonth(ym)).padStart(2, '0')}`
 
-// Leave days between two dates inclusive, not counting Sundays.
-export const leaveDays = (start, end, half = false) => {
-  if (!start || !end) return 0
-  const s = new Date(`${start}T00:00:00`), e = new Date(`${end}T00:00:00`)
-  if (e < s) return 0
-  let n = 0
-  for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) if (d.getDay() !== 0) n++
-  return half && n === 1 ? 0.5 : n
-}
+// Leave days between two dates inclusive: Saturdays, Sundays and company holidays are not counted.
+export { countLeaveDays as leaveDays } from './leaveBalance'
 
 export const initials = (name = '') =>
   name.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join('')

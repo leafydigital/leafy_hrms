@@ -25,6 +25,8 @@ import ProjectDetail from './pages/ProjectDetail'
 import Tasks from './pages/Tasks'
 import Wfh from './pages/Wfh'
 import Chat from './pages/Chat'
+import Profile from './pages/Profile'
+import Holidays from './pages/Holidays'
 
 function Notice({ title, children, action }) {
   return (
@@ -74,6 +76,8 @@ export default function App() {
           <Route path="/attendance" element={g('attendance', <Attendance />)} />
           <Route path="/wfh" element={g('wfh', <Wfh />)} />
           <Route path="/chat" element={g('chat', <Chat />)} />
+          <Route path="/profile" element={g('profile', <Profile />)} />
+          <Route path="/holidays" element={g('holidays', <Holidays />)} />
           <Route path="/salary" element={g('salary', <Salary />)} />
           <Route path="/salary-slabs" element={g('salarySlabs', <SalarySlabs />)} />
           <Route path="/payroll" element={g('payroll', <Payroll />)} />

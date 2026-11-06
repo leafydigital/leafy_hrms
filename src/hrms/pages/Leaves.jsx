@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Check, Plus, Settings2, X } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
+import { AlertCircle, Check, CheckCircle2, Plus, Settings2, X } from 'lucide-react'
 import { db } from '../lib/db'
 import { useAuth } from '../lib/useAuth'
 import { useRefs } from '../lib/refs'
 import { can } from '../lib/permissions'
 import { fmtDate, leaveDays, todayIST } from '../lib/format'
+import { isCompOffType, isEligible, isUnlimitedType, leaveBalance } from '../lib/leaveBalance'
 import { Empty, FormGrid, Loading, Modal, PageHeader, StatusBadge, Tabs, useToast } from '../components/ui'
 
 export default function Leaves() {
@@ -16,13 +18,14 @@ export default function Leaves() {
   const canManagePolicies = ['admin','hr'].includes(role)
 
   const [rows, setRows] = useState(null)
-  const [tab, setTab] = useState('mine')
+  const [tab, setTab] = useState(() => new URLSearchParams(window.location.search).get('tab') || 'mine')
   const [statusFilter, setStatusFilter] = useState('')
   const [apply, setApply] = useState(null) // null | values
   const [review, setReview] = useState(null) // {row, decision}
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
-  const [compOffDays, setCompOffDays] = useState(0)
+  const [compRows, setCompRows] = useState([])
+  const [params, setParams] = useSearchParams()
   const [showPolicies, setShowPolicies] = useState(false)
   const [policyRows, setPolicyRows] = useState([])
   const [newPolicy, setNewPolicy] = useState({ name: '', days_per_year: '0', monthly_accrual: '0', is_paid: '', carry_forward: false })
@@ -30,13 +33,17 @@ export default function Leaves() {
   const load = useCallback(async () => {
     const [{ data, error }, comp] = await Promise.all([
       db.from('leaves').select('*').order('created_at', { ascending: false }),
-      db.from('comp_off_ledger').select('days'),
+      db.from('comp_off_ledger').select('employee_id,days'),
     ])
     if (error) toast.error(error.message)
     setRows(data ?? [])
-    setCompOffDays((comp.data ?? []).reduce((sum, x) => sum + Number(x.days || 0), 0))
+    setCompRows(comp.data ?? [])
   }, [])
   useEffect(() => { load() }, [load])
+  // Dashboard "Apply for leave" (and any link to /leaves?apply=1) opens the form straight away.
+  useEffect(() => {
+    if (params.get('apply')) { openApply(false); setParams({}, { replace: true }) }
+  }, [params]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setPolicyRows(refs.leaveTypes.map((t) => ({ ...t }))) }, [refs.leaveTypes])
 
   const mine = useMemo(() => (rows ?? []).filter((r) => r.employee_id === me.id), [rows, me.id])
@@ -48,34 +55,17 @@ export default function Leaves() {
   const approvalRows = everyone
   const pendingCount = (rows ?? []).filter((r) => ['pending','cancellation_requested'].includes(r.status) && r.employee_id !== me.id).length
   const teamStaff = canReview ? refs.activeStaff : refs.activeStaff.filter((e) => e.reporting_to === me?.id)
+  const compEarnedFor = (employeeId) => compRows.filter((x) => x.employee_id === employeeId).reduce((sum, x) => sum + Number(x.days || 0), 0)
+  const balanceFor = (employee, type, asOf) => leaveBalance({
+    employee, type, asOf,
+    leaves: (rows || []).filter((r) => r.employee_id === employee.id),
+    compOffEarned: compEarnedFor(employee.id),
+  })
   const teamBalanceFor = (employee, type) => {
     if (!type) return null
-    const name = String(type.name || '').toLowerCase()
-    if (/maternity|paternity/.test(name)) return null // gender-specific balances are shown to the employee themselves
-    if (/lop|unpaid/.test(name)) return 'No fixed limit'
-    const employeeLeaves = (rows || []).filter((r) => r.employee_id === employee.id && r.leave_type_id === type.id)
-    const approved = employeeLeaves.filter((r) => r.status === 'approved')
-    const pending = employeeLeaves.filter((r) => ['pending','cancellation_requested'].includes(r.status))
-    const thisYearUsed = approved.filter((r) => r.start_date.startsWith(year)).reduce((sum, r) => sum + Number(r.days), 0)
-    const thisYearPending = pending.filter((r) => r.start_date.startsWith(year)).reduce((sum, r) => sum + Number(r.days), 0)
-    const currentMonthKey = todayIST().slice(0, 7)
-    const currentMonthUsed = approved.filter((r) => r.start_date.slice(0, 7) === currentMonthKey).reduce((sum, r) => sum + Number(r.days), 0)
-    const currentMonthPending = pending.filter((r) => r.start_date.slice(0, 7) === currentMonthKey).reduce((sum, r) => sum + Number(r.days), 0)
-    const join = employee.date_of_joining || `${year}-01-01`
-    const joinYear = Number(join.slice(0, 4)), joinMonth = Number(join.slice(5, 7))
-    const monthsThisYear = Math.max(0, currentMonth - (joinYear === Number(year) ? joinMonth - 1 : 0))
-    const intern = String(employee.employment_type || '').toLowerCase() === 'intern'
-    const monthly = intern && type.is_paid ? Number(type.probation_monthly_accrual || 1) : Number(type.monthly_accrual || 0)
-    let earned = monthly > 0 ? monthly : Number(type.days_per_year || 0)
-    let carry = 0
-    if (!intern && type.carry_forward && monthly > 0) {
-      const priorMonths = Math.max(0, (Number(year) - joinYear) * 12 - (joinMonth - 1))
-      const priorEarned = priorMonths * monthly
-      const priorUsed = approved.filter((r) => r.start_date.slice(0, 4) < year).reduce((sum, r) => sum + Number(r.days), 0)
-      const priorPending = pending.filter((r) => r.start_date.slice(0, 4) < year).reduce((sum, r) => sum + Number(r.days), 0)
-      carry = Math.max(0, priorEarned - priorUsed - priorPending)
-    }
-    return Math.max(0, carry + earned - (monthly > 0 ? currentMonthUsed + currentMonthPending : thisYearUsed + thisYearPending))
+    if (/maternity|paternity/i.test(type.name || '')) return null // gender-specific balances are shown to the employee themselves
+    const b = balanceFor(employee, type)
+    return b.limited ? b.left : 'No fixed limit'
   }
 
   // Leave balances: Interns are in probation and accrue one paid leave per month
@@ -86,43 +76,13 @@ export default function Leaves() {
   const joinedYear = Number(joinedDate.slice(0, 4))
   const joinedMonth = Number(joinedDate.slice(5, 7))
   const isIntern = String(me.employment_type || '').toLowerCase() === 'intern'
-  const eligibleTypes = refs.leaveTypes.filter((t) => {
-    const name = String(t.name || '').toLowerCase()
-    if (name.includes('maternity')) return String(me.gender || '').toLowerCase() === 'female'
-    if (name.includes('paternity')) return String(me.gender || '').toLowerCase() === 'male'
-    return true
-  })
+  const eligibleTypes = refs.leaveTypes.filter((t) => isEligible(t, me.gender))
+  // Same rules as the API check (lib/leaveBalance.js), so the cards and the server always agree.
   const balances = eligibleTypes
-    .filter((t) => Number(t.days_per_year) > 0 || Number(t.monthly_accrual) > 0 || /lop|unpaid/i.test(t.name || ''))
+    .filter((t) => !isCompOffType(t) && (Number(t.days_per_year) > 0 || Number(t.monthly_accrual) > 0 || isUnlimitedType(t)))
     .map((t) => {
-      const inYear = mine.filter((r) => r.leave_type_id === t.id && r.start_date.startsWith(year))
-      const approved = mine.filter((r) => r.leave_type_id === t.id && r.status === 'approved')
-      const pendingRows = mine.filter((r) => r.leave_type_id === t.id && ['pending','cancellation_requested'].includes(r.status))
-      const used = inYear.filter((r) => r.status === 'approved').reduce((sum, r) => sum + Number(r.days), 0)
-      const pending = inYear.filter((r) => ['pending','cancellation_requested'].includes(r.status)).reduce((sum, r) => sum + Number(r.days), 0)
-      const monthsThisYear = Math.max(0, currentMonth - (joinedYear === Number(year) ? joinedMonth - 1 : 0))
-      const monthsBeforeYear = Math.max(0, (Number(year) - joinedYear) * 12 - (joinedMonth - 1))
-      let earnedThisYear = Number(t.days_per_year || 0)
-      let carry = 0
-      let currentUsed = used
-      let currentPending = pending
-      if (Number(t.monthly_accrual) > 0) {
-        const accrual = isIntern && t.is_paid ? Number(t.probation_monthly_accrual || 1) : Number(t.monthly_accrual)
-        // Monthly entitlement is available only in that month. Unused CL is banked
-        // for next year's carry-forward, not added to the next month's quota.
-        earnedThisYear = accrual
-        currentUsed = inYear.filter((r) => r.status === 'approved' && r.start_date.slice(0, 7) === todayIST().slice(0, 7)).reduce((sum, r) => sum + Number(r.days), 0)
-        currentPending = inYear.filter((r) => ['pending','cancellation_requested'].includes(r.status) && r.start_date.slice(0, 7) === todayIST().slice(0, 7)).reduce((sum, r) => sum + Number(r.days), 0)
-        if (!isIntern && t.carry_forward) {
-          const priorEarned = monthsBeforeYear * Number(t.monthly_accrual)
-          const priorUsed = approved.filter((r) => r.start_date.slice(0, 4) < year).reduce((sum, r) => sum + Number(r.days), 0)
-          const priorPending = pendingRows.filter((r) => r.start_date.slice(0, 4) < year).reduce((sum, r) => sum + Number(r.days), 0)
-          carry = Math.max(0, priorEarned - priorUsed - priorPending)
-        }
-      }
-      if (isIntern && t.is_paid && Number(t.monthly_accrual) > 0) carry = 0
-      const unlimited = /lop|unpaid/i.test(t.name || '')
-      return { ...t, used, pending, left: unlimited ? Infinity : Math.max(0, carry + earnedThisYear - currentUsed - currentPending), carry, earnedThisYear }
+      const b = balanceFor(me, t)
+      return { ...t, ...b, left: b.limited ? b.left : Infinity }
     })
 
   const openApply = (onBehalf = false) =>
@@ -133,41 +93,52 @@ export default function Leaves() {
       start_date: todayIST(),
       end_date: todayIST(),
       half_day: false,
+      half_day_session: '',
       reason: '',
       status: 'pending',
     })
 
-  const days = apply ? leaveDays(apply.start_date, apply.end_date, apply.half_day) : 0
+  const days = apply ? leaveDays(apply.start_date, apply.end_date, apply.half_day, refs.holidayDates) : 0
   const sel = apply && refs.leaveType(apply.leave_type_id)
-  const compOffUsed = mine.filter((r) => /comp.?off/i.test(refs.leaveType(r.leave_type_id)?.name ?? '') && r.status === 'approved').reduce((sum, r) => sum + Number(r.days), 0)
-  const compOffAvailable = Math.max(0, compOffDays - compOffUsed)
-  const overQuota = (() => {
-    if (!apply || !sel || apply.employee_id !== me.id) return false
-    if (/comp.?off/i.test(sel.name ?? '')) return days > compOffAvailable
-    const b = balances.find((x) => x.id === sel.id)
-    return b ? days > b.left : false
-  })()
+  const compType = refs.leaveTypes.find(isCompOffType)
+  const compOffAvailable = compType ? balanceFor(me, compType).left : Math.max(0, compEarnedFor(me.id))
+  // Balance of the chosen type for the person the leave is for, in the month of the From date.
+  const target = apply && (apply.employee_id === me.id ? me : refs.emp(apply.employee_id))
+  const selBalance = apply && sel && target ? balanceFor(target, sel, apply.start_date) : null
+  const blocked = !!(apply && !apply.onBehalf && selBalance?.limited && (selBalance.left <= 0 || days > selBalance.left))
+  const overQuota = !!(apply && selBalance?.limited && days > selBalance.left)
+  const periodText = (b) => (b?.period === 'month' ? ` for ${new Date(`${apply.start_date}T00:00:00`).toLocaleDateString('en-GB', { month: 'long' })}` : b?.period === 'year' ? ` for ${apply.start_date.slice(0, 4)}` : '')
+  const typeOptions = () => refs.leaveTypes
+    .filter((t) => apply?.onBehalf || isEligible(t, me.gender))
+    .map((t) => {
+      if (apply?.onBehalf) return { value: t.id, label: t.name }
+      const b = balanceFor(me, t, apply?.start_date)
+      return { value: t.id, label: b.limited ? `${t.name} — ${b.left} day${b.left === 1 ? '' : 's'} left` : t.name }
+    })
 
   const fields = apply && [
     ...(apply.onBehalf
       ? [{ name: 'employee_id', label: 'Employee', type: 'select', required: true, full: true,
           options: (r) => r.activeStaff.filter((e) => role === 'admin' || e.id !== me.id).map((e) => ({ value: e.id, label: `${e.full_name} (${e.emp_code})` })) }]
       : []),
-    { name: 'leave_type_id', label: 'Leave type', type: 'select', required: true, options: (r) => r.leaveTypes.filter((t) => !t.eligible_gender || t.eligible_gender === 'any' || String(t.eligible_gender).toLowerCase() === String(me.gender || '').toLowerCase()).map((t) => ({ value: t.id, label: t.name })) },
+    { name: 'leave_type_id', label: 'Leave type', type: 'select', required: true, full: true, options: typeOptions },
     ...(apply.onBehalf
       ? [{ name: 'status', label: 'Status', type: 'select', required: true, options: [{ value: 'pending', label: 'Pending' }, { value: 'approved', label: 'Approved' }] }]
       : [{ name: 'spacer', label: '', type: 'text', hidden: () => true }]),
     { name: 'start_date', label: 'From', type: 'date', required: true, onChange: (v, cur) => (cur.end_date < v ? { end_date: v } : {}) },
     { name: 'end_date', label: 'To', type: 'date', required: true, min: apply.start_date },
-    { name: 'half_day', label: '', type: 'checkbox', checkLabel: 'Half day', hidden: (v) => v.start_date !== v.end_date },
+    { name: 'half_day', label: '', type: 'checkbox', checkLabel: 'Half day', hidden: (v) => v.start_date !== v.end_date, onChange: (v) => (v ? {} : { half_day_session: '' }) },
+    { name: 'half_day_session', label: 'Which half', type: 'select', required: true, hidden: (v) => !v.half_day || v.start_date !== v.end_date,
+      options: [{ value: 'morning', label: 'Morning (first half)' }, { value: 'afternoon', label: 'Afternoon (second half)' }] },
     { name: 'reason', label: 'Reason', type: 'textarea', full: true },
   ]
 
   const submit = async (e) => {
     e.preventDefault()
-    if (days <= 0) return toast.error('The selected dates contain no working days (Sundays are not counted).')
-    if (overQuota && !/lop|unpaid/i.test(sel?.name ?? '') && !/comp.?off/i.test(sel?.name ?? '')) return toast.error(`Insufficient ${sel?.name || 'leave'} balance. Remaining: ${balances.find((b) => b.id === sel.id)?.left ?? 0} day(s).` )
-    if (overQuota && /comp.?off/i.test(sel?.name ?? '')) return toast.error(`You only have ${compOffAvailable} compensatory day(s) available. Contact HR if a holiday credit is missing.`)
+    if (days <= 0) return toast.error('The selected dates have no working days (Saturdays, Sundays and company holidays are not counted).')
+    const half = !!apply.half_day && apply.start_date === apply.end_date
+    if (half && !apply.half_day_session) return toast.error('Choose morning or afternoon for the half day.')
+    if (blocked) return toast.error(selBalance.left <= 0 ? `You have no ${sel.name} left${periodText(selBalance)}.` : `You have only ${selBalance.left} day(s) of ${sel.name} left${periodText(selBalance)}.`)
     setSaving(true)
     const { error } = await db.from('leaves').insert({
       employee_id: apply.employee_id,
@@ -175,7 +146,8 @@ export default function Leaves() {
       start_date: apply.start_date,
       end_date: apply.end_date,
       days,
-      half_day: !!apply.half_day && apply.start_date === apply.end_date,
+      half_day: half,
+      half_day_session: half ? apply.half_day_session : null,
       reason: apply.reason || null,
       status: apply.onBehalf ? apply.status : 'pending',
     })
@@ -256,7 +228,7 @@ export default function Leaves() {
                   {showEmployee && <td className="td"><div className="font-semibold">{refs.empName(r.employee_id)}</div><div className="text-xs text-gray-500">{refs.empCode(r.employee_id)}</div></td>}
                   <td className="td">{refs.leaveType(r.leave_type_id)?.name}</td>
                   <td className="td whitespace-nowrap">{fmtDate(r.start_date)}{r.end_date !== r.start_date && ` → ${fmtDate(r.end_date)}`}</td>
-                  <td className="td">{Number(r.days)}{r.half_day && ' (half)'}</td>
+                  <td className="td">{Number(r.days)}{r.half_day && ` (half${r.half_day_session ? ` · ${r.half_day_session === 'morning' ? 'morning' : 'afternoon'}` : ''})`}</td>
                   <td className="td max-w-xs text-gray-600">{r.reason ?? '—'}{r.review_note && <div className="mt-1 text-xs text-gray-500">HR note: {r.review_note}</div>}</td>
                   <td className="td"><StatusBadge status={r.status} /></td>
                   <td className="td">
@@ -323,8 +295,9 @@ export default function Leaves() {
             {balances.map((b) => (
               <div key={b.id} className="card p-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">{b.name}</div>
-                <div className="mt-1 text-2xl font-bold">{Number.isFinite(b.left) ? b.left : "No fixed limit"} <span className="text-sm font-medium text-gray-500">{Number.isFinite(b.left) ? "remaining" : ""}</span></div>
-                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-100"><div className="h-full bg-lime-500" style={{ width: `${Math.min(100, (b.used / Math.max(1, Number(b.days_per_year || b.left + b.used))) * 100)}%` }} /></div>
+                <div className="mt-1 text-2xl font-bold">{Number.isFinite(b.left) ? b.left : "No fixed limit"} <span className="text-sm font-medium text-gray-500">{Number.isFinite(b.left) ? `remaining${b.period === 'month' ? ' this month' : ''}` : ""}</span></div>
+                {b.carry > 0 && <div className="text-xs text-gray-500">includes {b.carry} carried forward</div>}
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-100"><div className="h-full bg-lime-500" style={{ width: `${Number.isFinite(b.left) ? Math.min(100, (b.used / Math.max(1, b.used + b.pending + b.left)) * 100) : 0}%` }} /></div>
                 {b.pending > 0 && <div className="mt-1.5 text-xs text-amber-700">{b.pending} day(s) awaiting approval</div>}
               </div>
             ))}
@@ -365,16 +338,31 @@ export default function Leaves() {
         footer={
           <>
             <button type="button" className="btn btn-ghost" onClick={() => setApply(null)}>Cancel</button>
-            <button form="leave-form" className="btn btn-primary" disabled={saving}>{saving ? 'Sending…' : apply?.onBehalf ? 'Save' : 'Send for approval'}</button>
+            <button form="leave-form" className="btn btn-primary" disabled={saving || blocked}>{saving ? 'Sending…' : apply?.onBehalf ? 'Save' : 'Send for approval'}</button>
           </>
         }
       >
         {apply && (
           <form id="leave-form" onSubmit={submit}>
             <FormGrid fields={fields} values={apply} setValues={setApply} refs={refs} />
-            <div className="mt-4 rounded-lg bg-gray-50 px-3 py-2 text-sm">
-              <b>{days}</b> working day{days === 1 ? '' : 's'} <span className="text-gray-500">(Sundays not counted)</span>
-              {overQuota && <div className="mt-1 text-amber-700">This exceeds your remaining {sel.name} balance.</div>}
+            {sel && selBalance && (
+              selBalance.limited ? (
+                <div role="status" className={`mt-4 flex items-start gap-2 rounded-lg px-3 py-2.5 text-sm ${blocked ? 'border border-red-200 bg-red-50 text-red-700' : overQuota ? 'border border-amber-200 bg-amber-50 text-amber-800' : 'border border-lime-200 bg-lime-50 text-leaf-800'}`}>
+                  {blocked ? <AlertCircle size={16} className="mt-0.5 shrink-0" /> : <CheckCircle2 size={16} className="mt-0.5 shrink-0" />}
+                  <div>
+                    <b>{selBalance.left} day{selBalance.left === 1 ? '' : 's'}</b> of {sel.name} remaining{periodText(selBalance)}
+                    {apply.onBehalf && target ? ` for ${target.full_name}` : ''}
+                    {selBalance.pending > 0 && <span className="text-xs"> · {selBalance.pending} awaiting approval</span>}
+                    {blocked && <div className="mt-0.5 font-semibold">{selBalance.left <= 0 ? `You can't apply for ${sel.name} — choose another leave type.` : `You can apply for at most ${selBalance.left} day(s).`}</div>}
+                    {!blocked && overQuota && apply.onBehalf && <div className="mt-0.5 text-xs">This is more than the remaining balance. You can still record it as HR/Admin.</div>}
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-4 rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-600">{sel.name}: no fixed limit.</div>
+              )
+            )}
+            <div className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-sm">
+              <b>{days}</b> working day{days === 1 ? '' : 's'} <span className="text-gray-500">(Saturdays, Sundays and company holidays not counted)</span>
             </div>
           </form>
         )}

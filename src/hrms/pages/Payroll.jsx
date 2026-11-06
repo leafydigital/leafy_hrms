@@ -10,11 +10,13 @@ import { Empty, FormGrid, Loading, Modal, PageHeader, StatCard, StatusBadge, cle
 
 const num = (v) => Number(v || 0)
 const monthlyGross = (r) => num(r.basic) + num(r.hra) + num(r.allowances) + num(r.conveyance_allowance) + num(r.defray_expenses)
-const lopAmount = (r) => Math.round((monthlyGross(r) / Math.max(1, num(r.working_days))) * num(r.lop_days))
+// Per-day salary = monthly gross ÷ calendar days in that month (31 for October, 30 for November...).
+const perDay = (r) => monthlyGross(r) / Math.max(1, num(r.working_days))
+const lopAmount = (r) => Math.round(perDay(r) * num(r.lop_days))
 
 const FIELDS = [
-  { name: 'working_days', label: 'Working days in month', type: 'number', step: 1, required: true, onChange: (v, cur) => ({ lop_amount: lopAmount({ ...cur, working_days: v }) }) },
-  { name: 'lop_days', label: 'Loss-of-pay days', type: 'number', step: 0.5, min: 0, onChange: (v, cur) => ({ lop_amount: lopAmount({ ...cur, lop_days: v }) }) },
+  { name: 'working_days', label: 'Days in month', type: 'number', step: 1, required: true, hint: 'Per-day salary = monthly gross ÷ days in month.', onChange: (v, cur) => ({ lop_amount: lopAmount({ ...cur, working_days: v }) }) },
+  { name: 'lop_days', label: 'Loss-of-pay days', type: 'number', step: 0.5, min: 0, hint: 'Unpaid leave on working days (Saturdays, Sundays and holidays are not counted).', onChange: (v, cur) => ({ lop_amount: lopAmount({ ...cur, lop_days: v }) }) },
   { name: 'basic', label: 'Basic (₹)', type: 'number', min: 0 },
   { name: 'hra', label: 'HRA (₹)', type: 'number', min: 0 },
   { name: 'allowances', label: 'Other allowances (₹)', type: 'number', min: 0 },
@@ -72,22 +74,16 @@ export default function Payroll() {
     setBusy(true)
     try {
       const first = monthStart(month)
-      const [s, l, h] = await Promise.all([
+      const [s, l] = await Promise.all([
         db.from('salary_structures').select('*'),
         db.functions.invoke('payroll-lop-summary', { body: { month } }),
-        db.from('company_holidays').select('holiday_date').gte('holiday_date', first).lte('holiday_date', monthEnd(month)),
       ])
       if (s.error) throw s.error
       if (l.error) throw new Error(l.error.message || 'Could not calculate unpaid leave for payroll')
       const active = new Set(refs.activeStaff.map((e) => e.id))
       const lop = l.data?.lop_days ?? {}
-      const holidayDates = new Set((h.data ?? []).map((x) => x.holiday_date))
-      let wd = 0
-      for (let d = new Date(`${first}T00:00:00`), end = new Date(`${monthEnd(month)}T00:00:00`); d <= end; d.setDate(d.getDate() + 1)) {
-        const iso = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
-        if (d.getDay() !== 0 && !holidayDates.has(iso)) wd++
-      }
-      wd = Math.max(1, wd)
+      // Per-day rate uses every calendar day of the month (31 / 30 / 28 / 29).
+      const wd = Number(monthEnd(month).slice(8, 10))
 
       const toInsert = (s.data ?? []).filter((x) => active.has(x.employee_id)).map((x) => {
         const row = {

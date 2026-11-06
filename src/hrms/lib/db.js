@@ -25,6 +25,16 @@ try {
   else localStorage.removeItem(KEY)
 } catch { /* storage unavailable */ }
 
+// Message shown on the sign-in page after an automatic sign-out (e.g. outside sign-in hours).
+const NOTICE_KEY = 'leafy_hrms_notice'
+export function signOutWithNotice(message) {
+  try { if (message) sessionStorage.setItem(NOTICE_KEY, message) } catch { /* ignore */ }
+  setSession(null, 'SIGNED_OUT')
+}
+export function takeNotice() {
+  try { const m = sessionStorage.getItem(NOTICE_KEY); sessionStorage.removeItem(NOTICE_KEY); return m } catch { return null }
+}
+
 function setSession(s, event) {
   session = s
   try {
@@ -46,6 +56,7 @@ async function request(path, body) {
   }
   const json = await res.json().catch(() => ({}))
   if (res.status === 401 && session && path !== '/api/auth/login') setSession(null, 'SIGNED_OUT')
+  if (res.status === 403 && json.code === 'outside_hours' && session) signOutWithNotice(json.error)
   return { status: res.status, json }
 }
 
@@ -100,6 +111,34 @@ export async function api(path, body) {
   if (status === 200) return { data: json, error: null }
   return { data: null, error: { message: json.error || 'Request failed', field: json.field, fields: json.fields, status, details: json } }
 }
+/** Upload one file as raw bytes (chat attachments). Resolves { data, error }. */
+export async function apiUpload(path, file, onProgress) {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', `${API}${path}`)
+    if (session) xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`)
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream')
+    xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name || 'pasted-image.png'))
+    xhr.setRequestHeader('X-File-Type', file.type || 'application/octet-stream')
+    if (onProgress) xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total)
+    xhr.onload = () => {
+      let json = {}
+      try { json = JSON.parse(xhr.responseText || '{}') } catch { /* not json */ }
+      if (xhr.status === 401 && session) setSession(null, 'SIGNED_OUT')
+      resolve(xhr.status === 200 ? { data: json, error: null } : { data: null, error: { message: json.error || (xhr.status === 413 ? 'The file is too large.' : 'Upload failed') } })
+    }
+    xhr.onerror = () => resolve({ data: null, error: { message: 'Cannot reach the server. Check your connection and try again.' } })
+    xhr.send(file)
+  })
+}
+
+/** Download a protected file as a Blob (images and files in chat). */
+export async function apiBlob(path) {
+  const res = await fetch(`${API}${path}`, { headers: session ? { Authorization: `Bearer ${session.access_token}` } : {} })
+  if (!res.ok) throw new Error('Could not load the file')
+  return res.blob()
+}
+
 export const apiBase = API
 export const getAccessToken = () => session?.access_token ?? null
 export const onSessionChange = (cb) => { listeners.add(cb); return () => listeners.delete(cb) }
